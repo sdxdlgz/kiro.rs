@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(codex)",
+      "Skill(codex:*)",
+      "Bash(codex-wrapper - \"e:\\\\kiro.rs\" <<'EOF'\n分析这个项目的结构，特别关注：\n1. 项目整体架构和模块组织\n2. access token 自动刷新的实现机制\n3. 认证/授权相关的代码\n4. 找出可能导致 token 刷新失败的原因\n\n请使用 Glob、Grep、Read 工具深入探索代码库，找出所有与 token、auth、refresh 相关的代码。\nEOF)",
+      "Bash(cargo test:*)",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: 添加 token 刷新后凭证持久化功能\n\n- 在 KiroCredentials 中添加 save\\(\\) 方法用于保存凭证到文件\n- TokenManager 新增 credentials_path 字段，记录凭证文件路径\n- 刷新成功后自动将新凭证写回 credentials.json\n- 保存失败时仅记录警告，不影响服务运行\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
