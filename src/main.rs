@@ -1,10 +1,12 @@
+mod admin;
 mod anthropic;
 mod kiro;
 mod model;
 pub mod token;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use axum::Router;
 use clap::Parser;
 use kiro::account_pool::{AccountPool, AccountPoolConfig};
 use kiro::model::credentials::KiroCredentials;
@@ -73,6 +75,9 @@ async fn main() {
     // 创建 KiroProvider
     let kiro_provider = KiroProvider::new(account_pool);
 
+    // 获取账号池的 Arc 引用（用于 Admin API）
+    let account_pool_arc = kiro_provider.get_account_pool();
+
     // 打印账号池状态
     let status = kiro_provider.get_pool_status().await;
     tracing::info!("账号池状态: {} 个账号, {} 个健康", status.total, status.healthy);
@@ -84,8 +89,32 @@ async fn main() {
         auth_type: config.count_tokens_auth_type.clone(),
     });
 
+    // 确定凭证目录
+    let credentials_dir = if let Some(ref dir) = config.credentials_dir {
+        PathBuf::from(dir)
+    } else {
+        PathBuf::from("credentials")
+    };
+
+    // 确保凭证目录存在
+    if !credentials_dir.exists() {
+        std::fs::create_dir_all(&credentials_dir).ok();
+    }
+
+    // 创建 Admin API 状态
+    let admin_state = admin::handlers::AdminState::new(
+        account_pool_arc,
+        config.clone(),
+        credentials_dir,
+    );
+
     // 构建路由
-    let app = anthropic::create_router_with_provider(&api_key, Some(kiro_provider), profile_arn);
+    let anthropic_router = anthropic::create_router_with_provider(&api_key, Some(kiro_provider), profile_arn);
+    let admin_router = admin::router::create_admin_router(admin_state);
+
+    let app = Router::new()
+        .merge(anthropic_router)
+        .nest("/admin", admin_router);
 
     // 启动服务器
     let addr = format!("{}:{}", config.host, config.port);
@@ -95,6 +124,14 @@ async fn main() {
     tracing::info!("  GET  /v1/models");
     tracing::info!("  POST /v1/messages");
     tracing::info!("  POST /v1/messages/count_tokens");
+    tracing::info!("Admin API:");
+    tracing::info!("  GET  /admin/pool/status");
+    tracing::info!("  GET  /admin/accounts");
+    tracing::info!("  POST /admin/accounts");
+    tracing::info!("  POST /admin/accounts/remove");
+    tracing::info!("  POST /admin/accounts/refresh");
+    tracing::info!("  POST /admin/accounts/reset");
+    tracing::info!("  GET  /admin/config");
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

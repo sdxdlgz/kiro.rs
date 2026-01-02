@@ -215,6 +215,11 @@ impl KiroProvider {
             None
         }
     }
+
+    /// 获取账号池的 Arc 引用（用于 Admin API）
+    pub fn get_account_pool(&self) -> Arc<RwLock<AccountPool>> {
+        self.account_pool.clone()
+    }
 }
 
 /// 账号池状态

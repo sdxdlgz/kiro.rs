@@ -261,6 +261,28 @@ impl AccountPool {
     pub fn config(&self) -> &Config {
         &self.config
     }
+
+    /// 添加账号到池中
+    pub fn add_account(&mut self, account: Arc<AccountState>) {
+        tracing::info!("添加账号到池: {}", account.name);
+        self.accounts.push(account);
+    }
+
+    /// 从池中移除账号
+    pub fn remove_account(&mut self, name: &str) -> bool {
+        let initial_len = self.accounts.len();
+        self.accounts.retain(|a| a.name != name);
+        let removed = self.accounts.len() < initial_len;
+        if removed {
+            tracing::info!("从池中移除账号: {}", name);
+        }
+        removed
+    }
+
+    /// 获取池配置
+    pub fn pool_config(&self) -> &AccountPoolConfig {
+        &self.pool_config
+    }
 }
 
 #[cfg(test)]
