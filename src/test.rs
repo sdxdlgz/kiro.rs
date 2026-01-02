@@ -1,12 +1,12 @@
 use futures::StreamExt;
 
-use crate::debug::{print_event, print_event_verbose, debug_crc, print_hex};
+use crate::debug::{print_event_verbose};
+use crate::kiro::account_pool::{AccountPool, AccountPoolConfig};
 use crate::kiro::model::credentials::KiroCredentials;
 use crate::kiro::model::events::Event;
 use crate::kiro::model::requests::KiroRequest;
 use crate::kiro::parser::EventStreamDecoder;
 use crate::kiro::provider::KiroProvider;
-use crate::kiro::token_manager::TokenManager;
 use crate::model::config::Config;
 
 
@@ -31,17 +31,18 @@ pub(crate) async fn call_stream_api() -> anyhow::Result<()> {
     println!("  历史消息数: {}", request.conversation_state.history.len());
     println!("  工具数量: {}", request.conversation_state.current_message.user_input_message.user_input_message_context.tools.len());
 
-    // 加载凭证
-    let credentials = KiroCredentials::load_default()?;
-    println!("已加载凭证");
-
     // 加载配置
-    let config = Config::load_default()?;
+    let config = Config::load(Config::default_config_path())?;
     println!("API 区域: {}", config.region);
 
-    // 创建 TokenManager 和 KiroProvider
-    let token_manager = TokenManager::new(config, credentials, KiroCredentials::default_credentials_path());
-    let mut provider = KiroProvider::new(token_manager);
+    // 创建账号池（单账号模式）
+    let credentials_path = KiroCredentials::default_credentials_path();
+    let pool_config = AccountPoolConfig::default();
+    let account_pool = AccountPool::from_single_file(credentials_path, config, pool_config)?;
+    println!("已加载凭证");
+
+    // 创建 KiroProvider
+    let provider = KiroProvider::new(account_pool);
 
     println!("\n开始调用流式 API...\n");
     println!("{}", "=".repeat(60));
@@ -58,11 +59,6 @@ pub(crate) async fn call_stream_api() -> anyhow::Result<()> {
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
-                // 调试模式：打印原始 hex 数据
-                // println!("\n[收到数据块] {} 字节, 偏移 {}", chunk.len(), total_bytes);
-                // print_hex(&chunk);
-                // debug_crc(&chunk);
-
                 total_bytes += chunk.len();
 
                 // 将数据喂给解码器
@@ -78,8 +74,6 @@ pub(crate) async fn call_stream_api() -> anyhow::Result<()> {
                             // 解析事件
                             match Event::from_frame(frame) {
                                 Ok(event) => {
-                                    // 简洁输出
-                                    // print_event(&event);
                                     // 详细输出 (调试用)
                                     print_event_verbose(&event);
                                 }

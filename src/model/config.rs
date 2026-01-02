@@ -41,6 +41,19 @@ pub struct Config {
     /// count_tokens API 认证类型（可选，"x-api-key" 或 "bearer"，默认 "x-api-key"）
     #[serde(default = "default_count_tokens_auth_type")]
     pub count_tokens_auth_type: String,
+
+    /// 凭证目录路径（多账号模式）
+    /// 如果设置，将扫描该目录下所有 .json 文件作为账号凭证
+    #[serde(default)]
+    pub credentials_dir: Option<String>,
+
+    /// 故障冷却时间（秒），账号失败后多久可以重试
+    #[serde(default = "default_failure_cooldown_secs")]
+    pub failure_cooldown_secs: u64,
+
+    /// 最大连续失败次数，超过后账号将被禁用直到重启
+    #[serde(default = "default_max_failures")]
+    pub max_failures: u64,
 }
 
 fn default_host() -> String {
@@ -72,6 +85,14 @@ fn default_count_tokens_auth_type() -> String {
     "x-api-key".to_string()
 }
 
+fn default_failure_cooldown_secs() -> u64 {
+    60 // 1 分钟后重试
+}
+
+fn default_max_failures() -> u64 {
+    5 // 连续失败 5 次后禁用
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -86,6 +107,9 @@ impl Default for Config {
             count_tokens_api_url: None,
             count_tokens_api_key: None,
             count_tokens_auth_type: default_count_tokens_auth_type(),
+            credentials_dir: None,
+            failure_cooldown_secs: default_failure_cooldown_secs(),
+            max_failures: default_max_failures(),
         }
     }
 }

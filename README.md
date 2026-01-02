@@ -6,7 +6,8 @@
 
 - **Anthropic API 兼容**: 完整支持 Anthropic Claude API 格式
 - **流式响应**: 支持 SSE (Server-Sent Events) 流式输出
-- **Token 自动刷新**: 自动管理和刷新 OAuth Token
+- **Token 自动刷新**: 自动管理和刷新 OAuth Token，刷新后自动持久化到文件
+- **多账号轮询**: 支持多账号负载均衡，自动故障转移和恢复
 - **Thinking 模式**: 支持 Claude 的 extended thinking 功能
 - **工具调用**: 完整支持 function calling / tool use
 - **多模型支持**: 支持 Sonnet、Opus、Haiku 系列模型
@@ -41,6 +42,9 @@ cargo build --release
    "machineId": "如果你需要自定义机器码请将64位机器码填到这里",  // 不是标准格式会自动忽略, 自动生成
    "systemVersion": "darwin#24.6.0",
    "nodeVersion": "22.21.1",
+   "credentialsDir": "credentials",  // 可选，多账号凭证目录
+   "failureCooldownSecs": 60,  // 可选，账号失败后冷却时间（秒）
+   "maxFailures": 5,  // 可选，最大连续失败次数，超过后永久禁用
    "countTokensApiUrl": "https://api.example.com/v1/messages/count_tokens",  // 可选，外部 count_tokens API 地址
    "countTokensApiKey": "sk-your-count-tokens-api-key",  // 可选，外部 API 密钥
    "countTokensAuthType": "x-api-key"  // 可选，认证类型：x-api-key 或 bearer
@@ -49,16 +53,37 @@ cargo build --release
 
 ### 3. 凭证文件
 
+#### 单账号模式
+
 创建 `credentials.json` 凭证文件（从 Kiro IDE 获取）：
 
 ```json
 {
   "accessToken": "your-access-token",
   "refreshToken": "your-refresh-token",
-  "profileArn": "arn:aws:codewhisperer:us-east-1:{12位数字}:profile/{12位大写字母数字字符串}",  // 登录时返回
+  "profileArn": "arn:aws:codewhisperer:us-east-1:{12位数字}:profile/{12位大写字母数字字符串}",
   "expiresAt": "2024-01-01T00:00:00Z",
   "authMethod": "social",
   "provider": "Google"
+}
+```
+
+#### 多账号模式
+
+创建 `credentials/` 目录，每个账号一个 JSON 文件：
+
+```
+credentials/
+├── account1.json
+├── account2.json
+└── account3.json
+```
+
+每个文件格式与单账号相同。在 `config.json` 中设置 `credentialsDir` 启用多账号模式：
+
+```json
+{
+  "credentialsDir": "credentials"
 }
 ```
 
@@ -106,6 +131,9 @@ curl http://127.0.0.1:8990/v1/messages \
 | `countTokensApiUrl` | string | - | 外部 count_tokens API 地址（可选） |
 | `countTokensApiKey` | string | - | 外部 count_tokens API 密钥（可选） |
 | `countTokensAuthType` | string | `x-api-key` | 外部 API 认证类型：`x-api-key` 或 `bearer` |
+| `credentialsDir` | string | - | 多账号凭证目录路径（可选，设置后启用多账号模式） |
+| `failureCooldownSecs` | number | `60` | 账号失败后冷却时间（秒） |
+| `maxFailures` | number | `5` | 最大连续失败次数，超过后永久禁用账号 |
 
 ### credentials.json
 
@@ -146,6 +174,7 @@ kiro-rs/
 │   └── kiro/                   # Kiro API 客户端
 │       ├── provider.rs         # API 提供者
 │       ├── token_manager.rs    # Token 管理
+│       ├── account_pool.rs     # 多账号池管理
 │       ├── machine_id.rs       # 设备指纹生成
 │       ├── model/              # 数据模型
 │       │   ├── credentials.rs  # OAuth 凭证
@@ -225,6 +254,46 @@ kiro-rs/
   "stream": true,
   "messages": [...]
 }
+```
+
+### 多账号轮询
+
+支持多账号负载均衡和故障转移：
+
+**特性：**
+- **最少使用策略**: 自动选择请求次数最少的账号，实现负载均衡
+- **自动故障转移**: 账号请求失败时自动标记为不健康，切换到其他账号
+- **自动恢复**: 不健康账号在冷却期后自动恢复
+- **凭证持久化**: Token 刷新后自动保存到对应的凭证文件
+
+**配置示例：**
+
+```json
+{
+  "credentialsDir": "credentials",
+  "failureCooldownSecs": 60,
+  "maxFailures": 5
+}
+```
+
+**目录结构：**
+
+```
+credentials/
+├── google-account.json
+├── github-account.json
+└── aws-account.json
+```
+
+**运行日志示例：**
+
+```
+账号池初始化完成，共 3 个账号
+账号池状态: 3 个账号, 3 个健康
+使用账号: google-account (请求次数: 1)
+使用账号: github-account (请求次数: 1)
+使用账号: aws-account (请求次数: 1)
+使用账号: google-account (请求次数: 2)
 ```
 
 ## 认证方式

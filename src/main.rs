@@ -3,10 +3,12 @@ mod kiro;
 mod model;
 pub mod token;
 
+use std::path::Path;
+
 use clap::Parser;
+use kiro::account_pool::{AccountPool, AccountPoolConfig};
 use kiro::model::credentials::KiroCredentials;
 use kiro::provider::KiroProvider;
-use kiro::token_manager::TokenManager;
 use model::config::Config;
 use model::arg::Args;
 
@@ -15,11 +17,11 @@ async fn main() {
     // 解析命令行参数
     let args = Args::parse();
 
-    // 初始化日志
+    // 初始化日志（默认 DEBUG 级别）
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
+                .add_directive(tracing::Level::DEBUG.into()),
         )
         .init();
 
@@ -30,24 +32,50 @@ async fn main() {
         std::process::exit(1);
     });
 
-    // 加载凭证
-    let credentials_path = args.credentials.unwrap_or_else(|| KiroCredentials::default_credentials_path().to_string());
-    let credentials = KiroCredentials::load(&credentials_path).unwrap_or_else(|e| {
-        tracing::error!("加载凭证失败: {}", e);
-        std::process::exit(1);
-    });
-
-    tracing::debug!("凭证已加载: {:?}", credentials);
-
     // 获取 API Key
     let api_key = config.api_key.clone().unwrap_or_else(|| {
         tracing::error!("配置文件中未设置 apiKey");
         std::process::exit(1);
     });
 
+    // 创建账号池配置
+    let pool_config = AccountPoolConfig {
+        failure_cooldown_secs: config.failure_cooldown_secs,
+        max_failures: config.max_failures,
+    };
+
+    // 创建账号池（支持多账号或单账号模式）
+    let account_pool = if let Some(ref credentials_dir) = config.credentials_dir {
+        // 多账号模式：从目录加载
+        let dir_path = Path::new(credentials_dir);
+        AccountPool::from_directory(dir_path, config.clone(), pool_config).unwrap_or_else(|e| {
+            tracing::error!("加载凭证目录失败: {}", e);
+            std::process::exit(1);
+        })
+    } else {
+        // 单账号模式：从单个文件加载（兼容旧配置）
+        let credentials_path = args.credentials.unwrap_or_else(|| KiroCredentials::default_credentials_path().to_string());
+        AccountPool::from_single_file(&credentials_path, config.clone(), pool_config).unwrap_or_else(|e| {
+            tracing::error!("加载凭证文件失败: {}", e);
+            std::process::exit(1);
+        })
+    };
+
+    // 获取 profile_arn（用于路由）
+    let profile_arn = {
+        if let Some(account) = account_pool.get_all_accounts().first() {
+            account.get_profile_arn().await
+        } else {
+            None
+        }
+    };
+
     // 创建 KiroProvider
-    let token_manager = TokenManager::new(config.clone(), credentials.clone(), &credentials_path);
-    let kiro_provider = KiroProvider::new(token_manager);
+    let kiro_provider = KiroProvider::new(account_pool);
+
+    // 打印账号池状态
+    let status = kiro_provider.get_pool_status().await;
+    tracing::info!("账号池状态: {} 个账号, {} 个健康", status.total, status.healthy);
 
     // 初始化 count_tokens 配置
     token::init_config(token::CountTokensConfig {
@@ -56,8 +84,8 @@ async fn main() {
         auth_type: config.count_tokens_auth_type.clone(),
     });
 
-    // 构建路由（从凭据获取 profile_arn）
-    let app = anthropic::create_router_with_provider(&api_key, Some(kiro_provider), credentials.profile_arn.clone());
+    // 构建路由
+    let app = anthropic::create_router_with_provider(&api_key, Some(kiro_provider), profile_arn);
 
     // 启动服务器
     let addr = format!("{}:{}", config.host, config.port);
