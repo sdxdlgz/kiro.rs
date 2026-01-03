@@ -24,6 +24,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/accounts/remove", post(remove_account))
         .route("/accounts/refresh", post(refresh_token))
         .route("/accounts/reset", post(reset_account))
+        .route("/accounts/check", post(check_account))
+        .route("/accounts/batch-check", post(batch_check_accounts))
+        .route("/accounts/import-sso", post(import_sso_token))
+        .route("/accounts/credentials", post(get_credentials))
         // 配置
         .route("/config", get(get_config))
         .layer(cors)

@@ -1,354 +1,592 @@
-import { useEffect, useState } from 'react';
-import { getAccounts, addAccount, removeAccount, refreshToken, resetAccount } from '../api';
-import type { AccountInfo, AddAccountRequest } from '../types';
+import { useState, useCallback } from 'react';
+import {
+  Users,
+  CheckCircle,
+  Activity,
+  Loader2,
+  AlertCircle,
+  UserPlus,
+  Import,
+} from 'lucide-react';
+import type { ViewMode, SortField, AddAccountRequest, AccountCredentialsExport } from '../types';
+import { useAccountsRemote } from '../hooks/useAccountsRemote';
+import { useAccountsMetaStorage } from '../hooks/useAccountsMetaStorage';
+import { useAccountsViewModel } from '../hooks/useAccountsViewModel';
+import { useCheckResultsStorage } from '../hooks/useCheckResultsStorage';
+import {
+  AccountsToolbar,
+  AccountsFilterPanel,
+  AccountCardGrid,
+  AccountCompactList,
+  AccountsTable,
+  GroupManageDialog,
+  TagManageDialog,
+  ImportAccountsDialog,
+  ExportDialog,
+} from '../components/accounts';
 
 export function Accounts() {
-  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // 远程数据
+  const {
+    accounts,
+    loading,
+    error,
+    refreshAccountToken,
+    resetAccountStatus,
+    deleteAccount,
+    createAccount,
+    batchRefresh,
+    batchDelete,
+    checkAccountUsage,
+    batchCheckAccountsUsage,
+    getAccountCredentials,
+  } = useAccountsRemote();
 
-  const fetchAccounts = async () => {
-    const res = await getAccounts();
-    if (res.success && res.data) {
-      setAccounts(res.data);
-      setError(null);
+  // 本地元数据存储
+  const {
+    groups,
+    tags,
+    metaByName,
+    addGroup,
+    updateGroup,
+    removeGroup,
+    addTag,
+    updateTag,
+    removeTag,
+  } = useAccountsMetaStorage();
+
+  // 视图模型
+  const {
+    filterOptions,
+    setFilterOptions,
+    sortOptions,
+    setSortOptions,
+    selectedNames,
+    toggleSelection,
+    selectAll,
+    deselectAll,
+    actionStates,
+    setActionState,
+    sortedAccounts,
+    hasSelection,
+    selectionCount,
+  } = useAccountsViewModel({ accounts, metaByName });
+
+  // 检查结果持久化存储
+  const { checkResults, updateCheckResult } = useCheckResultsStorage();
+
+  // UI 状态
+  const [viewMode, setViewMode] = useState<ViewMode>('card');
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [showGroupManager, setShowGroupManager] = useState(false);
+  const [showTagManager, setShowTagManager] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchCheckLoading, setBatchCheckLoading] = useState(false);
+  const [detailsAccount, setDetailsAccount] = useState<AccountCredentialsExport | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  // 搜索
+  const [searchValue, setSearchValue] = useState('');
+
+  // 处理搜索变化
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchValue(value);
+    setFilterOptions({ ...filterOptions, search: value || undefined });
+  }, [filterOptions, setFilterOptions]);
+
+  // 处理排序
+  const handleSort = useCallback((field: SortField) => {
+    if (sortOptions.field === field) {
+      setSortOptions({ ...sortOptions, order: sortOptions.order === 'asc' ? 'desc' : 'asc' });
     } else {
-      setError(res.error || '获取账号列表失败');
+      setSortOptions({ field, order: 'asc' });
     }
-    setLoading(false);
-  };
+  }, [sortOptions, setSortOptions]);
 
-  useEffect(() => {
-    fetchAccounts();
-  }, []);
-
-  const handleRefresh = async (name: string) => {
-    setActionLoading(name);
-    const res = await refreshToken(name);
-    if (!res.success) {
-      alert(res.error || '刷新失败');
+  // 单个账号操作
+  const handleRefresh = useCallback(async (name: string) => {
+    // 刷新账号信息 = 检查账号（获取额度信息）
+    setActionState(name, 'checking');
+    const result = await checkAccountUsage(name);
+    setActionState(name, 'idle');
+    if (result && !result.error) {
+      // 更新持久化存储
+      updateCheckResult(name, result);
+      console.log(`账号 ${name} 检查完成: ${result.subscription || '未知'} - ${result.usagePercent.toFixed(1)}%`);
     }
-    await fetchAccounts();
-    setActionLoading(null);
-  };
+  }, [checkAccountUsage, setActionState, updateCheckResult]);
 
-  const handleReset = async (name: string) => {
-    setActionLoading(name);
-    const res = await resetAccount(name);
-    if (!res.success) {
-      alert(res.error || '重置失败');
-    }
-    await fetchAccounts();
-    setActionLoading(null);
-  };
+  const handleRefreshToken = useCallback(async (name: string) => {
+    setActionState(name, 'refreshing');
+    await refreshAccountToken(name);
+    setActionState(name, 'idle');
+  }, [refreshAccountToken, setActionState]);
 
-  const handleRemove = async (name: string) => {
+  const handleReset = useCallback(async (name: string) => {
+    setActionState(name, 'refreshing');
+    await resetAccountStatus(name);
+    setActionState(name, 'idle');
+  }, [resetAccountStatus, setActionState]);
+
+  const handleRemove = useCallback(async (name: string) => {
     if (!confirm(`确定要删除账号 ${name} 吗？`)) return;
+    setActionState(name, 'deleting');
+    await deleteAccount(name);
+    setActionState(name, 'idle');
+  }, [deleteAccount, setActionState]);
 
-    setActionLoading(name);
-    const res = await removeAccount(name, true);
-    if (!res.success) {
-      alert(res.error || '删除失败');
+  const handleCheck = useCallback(async (name: string) => {
+    setActionState(name, 'checking');
+    const result = await checkAccountUsage(name);
+    setActionState(name, 'idle');
+    if (result) {
+      if (!result.error) {
+        // 更新持久化存储
+        updateCheckResult(name, result);
+      }
+      // 显示检查结果
+      const message = result.error
+        ? `检查失败: ${result.error}`
+        : `订阅: ${result.subscription || '未知'}\n使用量: ${result.currentUsage.toFixed(1)} / ${result.usageLimit.toFixed(1)} (${result.usagePercent.toFixed(1)}%)`;
+      alert(message);
     }
-    await fetchAccounts();
-    setActionLoading(null);
-  };
+  }, [checkAccountUsage, setActionState, updateCheckResult]);
 
-  const handleAddAccount = async (data: AddAccountRequest) => {
-    const res = await addAccount(data);
-    if (res.success) {
-      setShowAddDialog(false);
-      await fetchAccounts();
+  // 批量操作
+  const handleBatchRefresh = useCallback(async () => {
+    if (!confirm(`确定要刷新选中的 ${selectionCount} 个账号吗？`)) return;
+    setBatchLoading(true);
+    const names = Array.from(selectedNames);
+    await batchRefresh(names);
+    setBatchLoading(false);
+    deselectAll();
+  }, [selectedNames, selectionCount, batchRefresh, deselectAll]);
+
+  const handleBatchDelete = useCallback(async () => {
+    if (!confirm(`确定要删除选中的 ${selectionCount} 个账号吗？此操作不可恢复！`)) return;
+    setBatchLoading(true);
+    const names = Array.from(selectedNames);
+    await batchDelete(names);
+    setBatchLoading(false);
+    deselectAll();
+  }, [selectedNames, selectionCount, batchDelete, deselectAll]);
+
+  const handleBatchCheck = useCallback(async () => {
+    if (selectionCount === 0) return;
+    setBatchCheckLoading(true);
+    const names = Array.from(selectedNames);
+    const results = await batchCheckAccountsUsage(names);
+    setBatchCheckLoading(false);
+
+    // 显示检查结果摘要
+    const successCount = results.filter(r => !r.error).length;
+    const failedCount = results.filter(r => r.error).length;
+
+    let message = `检查完成：成功 ${successCount} 个，失败 ${failedCount} 个\n\n`;
+    results.forEach(r => {
+      if (r.error) {
+        message += `❌ ${r.name}: ${r.error}\n`;
+      } else {
+        message += `✓ ${r.name}: ${r.subscription || '未知'} - ${r.currentUsage.toFixed(1)}/${r.usageLimit.toFixed(1)} (${r.usagePercent.toFixed(1)}%)\n`;
+      }
+    });
+    alert(message);
+  }, [selectedNames, selectionCount, batchCheckAccountsUsage]);
+
+  // 导入账号
+  const handleImport = useCallback(async (data: AddAccountRequest): Promise<boolean> => {
+    const success = await createAccount(data);
+    if (!success) {
+      alert('导入失败');
+    }
+    return success;
+  }, [createAccount]);
+
+  // 查看详情
+  const handleViewDetails = useCallback(async (name: string) => {
+    setDetailsLoading(true);
+    const creds = await getAccountCredentials(name);
+    setDetailsLoading(false);
+    if (creds) {
+      setDetailsAccount(creds);
     } else {
-      alert(res.error || '添加失败');
+      alert('获取账号详情失败');
     }
-  };
+  }, [getAccountCredentials]);
 
+  // 复制凭证
+  const handleCopyCredentials = useCallback(async (name: string) => {
+    const creds = await getAccountCredentials(name);
+    if (creds) {
+      const text = JSON.stringify({
+        name: creds.name,
+        refreshToken: creds.refreshToken,
+        accessToken: creds.accessToken,
+        clientId: creds.clientId,
+        clientSecret: creds.clientSecret,
+        region: creds.region,
+        expiresAt: creds.expiresAt,
+        authMethod: creds.authMethod,
+        provider: creds.provider,
+      }, null, 2);
+      await navigator.clipboard.writeText(text);
+    }
+  }, [getAccountCredentials]);
+
+  // 加载状态
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">加载账号数据...</p>
+        </div>
       </div>
     );
   }
 
+  const healthyCount = accounts.filter(a => a.healthy).length;
+  const totalRequests = accounts.reduce((sum, a) => sum + a.request_count, 0);
+
   return (
     <div className="space-y-6">
-      {/* 头部 */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">账号管理</h1>
-        <button
-          onClick={() => setShowAddDialog(true)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
-        >
-          <span>+</span>
-          <span>导入账号</span>
-        </button>
+      {/* 页面头部 */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-purple-600/20 via-primary/20 to-purple-600/20 p-6 border border-purple-500/20">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-purple-500/20 to-transparent rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+        <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-primary/20 to-transparent rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" />
+
+        <div className="relative flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-purple-500/20 border border-purple-500/30">
+              <Users className="h-8 w-8 text-purple-500" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">账号管理</h1>
+              <p className="text-muted-foreground mt-1">管理和导入 Kiro SSO Token</p>
+            </div>
+          </div>
+        </div>
+
+        {/* 快速统计 */}
+        <div className="relative mt-6 grid grid-cols-3 gap-4">
+          <div className="bg-card/50 rounded-xl p-4 border border-border">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <Users className="h-4 w-4" />
+              <span>总账号</span>
+            </div>
+            <p className="text-2xl font-bold text-foreground mt-1">{accounts.length}</p>
+          </div>
+          <div className="bg-card/50 rounded-xl p-4 border border-border">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <span>健康账号</span>
+            </div>
+            <p className="text-2xl font-bold text-green-500 mt-1">{healthyCount}</p>
+          </div>
+          <div className="bg-card/50 rounded-xl p-4 border border-border">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <Activity className="h-4 w-4 text-primary" />
+              <span>总请求</span>
+            </div>
+            <p className="text-2xl font-bold text-primary mt-1">{totalRequests.toLocaleString()}</p>
+          </div>
+        </div>
       </div>
 
+      {/* 错误提示 */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-red-400">
-          {error}
+        <div className="bg-destructive/10 border border-destructive/30 rounded-xl p-4 text-destructive flex items-center gap-3">
+          <AlertCircle className="h-5 w-5 flex-shrink-0" />
+          <div>
+            <p className="font-medium">加载失败</p>
+            <p className="text-sm opacity-80">{error}</p>
+          </div>
         </div>
       )}
 
-      {/* 账号卡片网格 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {accounts.map((account) => (
-          <AccountCard
-            key={account.name}
-            account={account}
-            loading={actionLoading === account.name}
-            onRefresh={() => handleRefresh(account.name)}
-            onReset={() => handleReset(account.name)}
-            onRemove={() => handleRemove(account.name)}
-          />
-        ))}
-      </div>
+      {/* 工具栏 */}
+      <AccountsToolbar
+        searchValue={searchValue}
+        onSearchChange={handleSearchChange}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        filterOptions={filterOptions}
+        showFilterPanel={showFilterPanel}
+        onToggleFilterPanel={() => setShowFilterPanel(!showFilterPanel)}
+        sortOptions={sortOptions}
+        onSortChange={setSortOptions}
+        hasSelection={hasSelection}
+        selectionCount={selectionCount}
+        onSelectAll={selectAll}
+        onDeselectAll={deselectAll}
+        onBatchRefresh={handleBatchRefresh}
+        onBatchDelete={handleBatchDelete}
+        onBatchCheck={handleBatchCheck}
+        batchLoading={batchLoading}
+        batchCheckLoading={batchCheckLoading}
+        onOpenGroupManager={() => setShowGroupManager(true)}
+        onOpenTagManager={() => setShowTagManager(true)}
+        onImport={() => setShowImportDialog(true)}
+        onExport={() => setShowExportDialog(true)}
+        totalCount={accounts.length}
+        filteredCount={sortedAccounts.length}
+      />
 
-      {accounts.length === 0 && !error && (
-        <div className="text-center py-12 text-slate-400">
-          <p className="text-lg">暂无账号</p>
-          <p className="text-sm mt-2">点击"导入账号"添加第一个账号</p>
-        </div>
-      )}
-
-      {/* 添加账号对话框 */}
-      {showAddDialog && (
-        <AddAccountDialog
-          onClose={() => setShowAddDialog(false)}
-          onSubmit={handleAddAccount}
+      {/* 筛选面板 */}
+      {showFilterPanel && (
+        <AccountsFilterPanel
+          filterOptions={filterOptions}
+          onFilterChange={setFilterOptions}
+          onClose={() => setShowFilterPanel(false)}
+          groups={groups}
+          tags={tags}
         />
       )}
-    </div>
-  );
-}
 
-interface AccountCardProps {
-  account: AccountInfo;
-  loading: boolean;
-  onRefresh: () => void;
-  onReset: () => void;
-  onRemove: () => void;
-}
-
-function AccountCard({ account, loading, onRefresh, onReset, onRemove }: AccountCardProps) {
-  return (
-    <div className={`bg-slate-800/50 rounded-xl border ${
-      account.healthy ? 'border-slate-700/50' : 'border-red-500/30'
-    } p-5 space-y-4`}>
-      {/* 头部 */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${account.healthy ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          <div>
-            <h3 className="font-semibold text-white">{account.name}</h3>
-            <p className="text-xs text-slate-400">
-              {account.auth_method || 'social'} {account.provider ? `· ${account.provider}` : ''}
-            </p>
+      {/* 账号列表 */}
+      {sortedAccounts.length > 0 ? (
+        viewMode === 'card' ? (
+          <div className="h-[calc(100vh-420px)] min-h-[400px]">
+            <AccountCardGrid
+              accounts={sortedAccounts}
+              metaByName={metaByName}
+              groups={groups}
+              tags={tags}
+              actionStates={actionStates}
+              selectedNames={selectedNames}
+              checkResults={checkResults}
+              onToggleSelection={toggleSelection}
+              onRefresh={handleRefresh}
+              onRefreshToken={handleRefreshToken}
+              onRemove={handleRemove}
+              onViewDetails={handleViewDetails}
+              onAddAccount={() => setShowImportDialog(true)}
+              onCheck={handleCheck}
+              onCopyCredentials={handleCopyCredentials}
+            />
           </div>
-        </div>
-        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
-          account.healthy
-            ? 'bg-green-500/20 text-green-400'
-            : 'bg-red-500/20 text-red-400'
-        }`}>
-          {account.healthy ? '健康' : '异常'}
-        </span>
-      </div>
-
-      {/* 统计 */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-slate-900/50 rounded-lg p-3">
-          <p className="text-xs text-slate-400">请求次数</p>
-          <p className="text-lg font-semibold text-white">{account.request_count.toLocaleString()}</p>
-        </div>
-        <div className="bg-slate-900/50 rounded-lg p-3">
-          <p className="text-xs text-slate-400">失败次数</p>
-          <p className={`text-lg font-semibold ${account.failure_count > 0 ? 'text-red-400' : 'text-white'}`}>
-            {account.failure_count}
+        ) : viewMode === 'compact' ? (
+          <AccountCompactList
+            accounts={sortedAccounts}
+            metaByName={metaByName}
+            groups={groups}
+            tags={tags}
+            actionStates={actionStates}
+            selectedNames={selectedNames}
+            onToggleSelection={toggleSelection}
+            onRefresh={handleRefresh}
+            onReset={handleReset}
+            onRemove={handleRemove}
+            onViewDetails={handleViewDetails}
+            onCheck={handleCheck}
+          />
+        ) : (
+          <AccountsTable
+            accounts={sortedAccounts}
+            metaByName={metaByName}
+            groups={groups}
+            tags={tags}
+            actionStates={actionStates}
+            selectedNames={selectedNames}
+            sortField={sortOptions.field}
+            sortOrder={sortOptions.order}
+            onSort={handleSort}
+            onToggleSelection={toggleSelection}
+            onSelectAll={() => hasSelection ? deselectAll() : selectAll()}
+            onRefresh={handleRefresh}
+            onReset={handleReset}
+            onRemove={handleRemove}
+            onViewDetails={handleViewDetails}
+          />
+        )
+      ) : !error && (
+        <div className="bg-card rounded-2xl border border-border p-12 text-center">
+          <div className="inline-flex p-4 rounded-2xl bg-muted mb-4">
+            <UserPlus className="h-12 w-12 text-muted-foreground" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">
+            {accounts.length === 0 ? '暂无账号' : '没有匹配的账号'}
+          </h3>
+          <p className="text-muted-foreground mb-6">
+            {accounts.length === 0
+              ? '点击上方"导入"按钮添加第一个 Kiro 账号'
+              : '尝试调整筛选条件'}
           </p>
-        </div>
-      </div>
-
-      {/* 操作按钮 */}
-      <div className="flex gap-2 pt-2">
-        <button
-          onClick={onRefresh}
-          disabled={loading}
-          className="flex-1 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg text-sm transition-colors disabled:opacity-50"
-        >
-          {loading ? '处理中...' : '刷新 Token'}
-        </button>
-        {!account.healthy && (
-          <button
-            onClick={onReset}
-            disabled={loading}
-            className="px-3 py-2 bg-green-600/20 hover:bg-green-600/30 text-green-400 rounded-lg text-sm transition-colors disabled:opacity-50"
-          >
-            重置
-          </button>
-        )}
-        <button
-          onClick={onRemove}
-          disabled={loading}
-          className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm transition-colors disabled:opacity-50"
-        >
-          删除
-        </button>
-      </div>
-    </div>
-  );
-}
-
-interface AddAccountDialogProps {
-  onClose: () => void;
-  onSubmit: (data: AddAccountRequest) => void;
-}
-
-function AddAccountDialog({ onClose, onSubmit }: AddAccountDialogProps) {
-  const [name, setName] = useState('');
-  const [accessToken, setAccessToken] = useState('');
-  const [refreshToken, setRefreshToken] = useState('');
-  const [profileArn, setProfileArn] = useState('');
-  const [authMethod, setAuthMethod] = useState('social');
-  const [provider, setProvider] = useState('Google');
-  const [addToPool, setAddToPool] = useState(true);
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !refreshToken) {
-      alert('请填写账号名称和 Refresh Token');
-      return;
-    }
-    setLoading(true);
-    await onSubmit({
-      name,
-      accessToken,
-      refreshToken,
-      profileArn: profileArn || undefined,
-      authMethod,
-      provider,
-      addToPool,
-    });
-    setLoading(false);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">导入 SSO Token</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
-            ✕
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">账号名称 *</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例如: my-account"
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Access Token</label>
-            <textarea
-              value={accessToken}
-              onChange={(e) => setAccessToken(e.target.value)}
-              placeholder="可选，留空会自动刷新"
-              rows={2}
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono text-sm"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Refresh Token *</label>
-            <textarea
-              value={refreshToken}
-              onChange={(e) => setRefreshToken(e.target.value)}
-              placeholder="从 Kiro IDE 获取的 refreshToken"
-              rows={3}
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono text-sm"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Profile ARN</label>
-            <input
-              type="text"
-              value={profileArn}
-              onChange={(e) => setProfileArn(e.target.value)}
-              placeholder="可选"
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono text-sm"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">认证方式</label>
-              <select
-                value={authMethod}
-                onChange={(e) => setAuthMethod(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="social">Social</option>
-                <option value="IdC">IdC</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">登录提供商</label>
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="Google">Google</option>
-                <option value="Github">Github</option>
-                <option value="BuilderId">BuilderId</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="addToPool"
-              checked={addToPool}
-              onChange={(e) => setAddToPool(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500"
-            />
-            <label htmlFor="addToPool" className="text-sm text-slate-300">
-              添加到轮换池
-            </label>
-          </div>
-
-          <div className="flex gap-3 pt-4">
+          {accounts.length === 0 && (
             <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+              onClick={() => setShowImportDialog(true)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl transition-colors"
             >
-              取消
+              <Import className="h-4 w-4" />
+              <span>导入账号</span>
             </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50"
-            >
-              {loading ? '导入中...' : '导入'}
-            </button>
+          )}
+        </div>
+      )}
+
+      {/* 对话框 */}
+      {showGroupManager && (
+        <GroupManageDialog
+          groups={groups}
+          onClose={() => setShowGroupManager(false)}
+          onAddGroup={addGroup}
+          onUpdateGroup={updateGroup}
+          onRemoveGroup={removeGroup}
+        />
+      )}
+
+      {showTagManager && (
+        <TagManageDialog
+          tags={tags}
+          onClose={() => setShowTagManager(false)}
+          onAddTag={addTag}
+          onUpdateTag={updateTag}
+          onRemoveTag={removeTag}
+        />
+      )}
+
+      {showImportDialog && (
+        <ImportAccountsDialog
+          onClose={() => setShowImportDialog(false)}
+          onSubmit={handleImport}
+        />
+      )}
+
+      {showExportDialog && (
+        <ExportDialog
+          accounts={sortedAccounts}
+          metaByName={metaByName}
+          groups={groups}
+          tags={tags}
+          onClose={() => setShowExportDialog(false)}
+        />
+      )}
+
+      {/* 账号详情对话框 */}
+      {detailsAccount && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-2xl border border-border w-full max-w-lg shadow-2xl max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-foreground">账号详情</h2>
+              <button
+                onClick={() => setDetailsAccount(null)}
+                className="p-2 hover:bg-muted rounded-lg transition-colors text-muted-foreground hover:text-foreground"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-6 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground">名称</span>
+                  <p className="font-medium text-foreground">{detailsAccount.name}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">状态</span>
+                  <p className={`font-medium ${detailsAccount.healthy ? 'text-green-500' : 'text-red-500'}`}>
+                    {detailsAccount.healthy ? '健康' : '异常'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">认证方式</span>
+                  <p className="font-medium text-foreground">{detailsAccount.authMethod || '-'}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">提供商</span>
+                  <p className="font-medium text-foreground">{detailsAccount.provider || '-'}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Region</span>
+                  <p className="font-medium text-foreground">{detailsAccount.region || '-'}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">过期时间</span>
+                  <p className="font-medium text-foreground">
+                    {detailsAccount.expiresAt ? new Date(detailsAccount.expiresAt).toLocaleString('zh-CN') : '-'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">请求数</span>
+                  <p className="font-medium text-foreground">{detailsAccount.requestCount}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">失败数</span>
+                  <p className="font-medium text-foreground">{detailsAccount.failureCount}</p>
+                </div>
+              </div>
+
+              {/* 凭证信息 */}
+              <div className="space-y-3 pt-4 border-t border-border">
+                <h3 className="text-sm font-medium text-foreground">凭证信息</h3>
+                {detailsAccount.accessToken && (
+                  <div>
+                    <span className="text-xs text-muted-foreground">Access Token</span>
+                    <p className="font-mono text-xs bg-muted p-2 rounded break-all max-h-24 overflow-y-auto">
+                      {detailsAccount.accessToken}
+                    </p>
+                  </div>
+                )}
+                {detailsAccount.refreshToken && (
+                  <div>
+                    <span className="text-xs text-muted-foreground">Refresh Token</span>
+                    <p className="font-mono text-xs bg-muted p-2 rounded break-all max-h-24 overflow-y-auto">
+                      {detailsAccount.refreshToken}
+                    </p>
+                  </div>
+                )}
+                {detailsAccount.csrfToken && (
+                  <div>
+                    <span className="text-xs text-muted-foreground">CSRF Token</span>
+                    <p className="font-mono text-xs bg-muted p-2 rounded break-all max-h-24 overflow-y-auto">
+                      {detailsAccount.csrfToken}
+                    </p>
+                  </div>
+                )}
+                {detailsAccount.clientId && (
+                  <div>
+                    <span className="text-xs text-muted-foreground">Client ID</span>
+                    <p className="font-mono text-xs bg-muted p-2 rounded break-all">{detailsAccount.clientId}</p>
+                  </div>
+                )}
+                {detailsAccount.clientSecret && (
+                  <div>
+                    <span className="text-xs text-muted-foreground">Client Secret</span>
+                    <p className="font-mono text-xs bg-muted p-2 rounded break-all max-h-24 overflow-y-auto">
+                      {detailsAccount.clientSecret}
+                    </p>
+                  </div>
+                )}
+                {detailsAccount.profileArn && (
+                  <div>
+                    <span className="text-xs text-muted-foreground">Profile ARN</span>
+                    <p className="font-mono text-xs bg-muted p-2 rounded break-all">{detailsAccount.profileArn}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-border">
+              <button
+                onClick={() => setDetailsAccount(null)}
+                className="w-full px-4 py-2.5 bg-muted hover:bg-muted/80 text-foreground rounded-xl transition-colors"
+              >
+                关闭
+              </button>
+            </div>
           </div>
-        </form>
-      </div>
+        </div>
+      )}
+
+      {/* 加载详情中 */}
+      {detailsLoading && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-card rounded-xl p-6 flex items-center gap-3">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span className="text-foreground">加载账号详情...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

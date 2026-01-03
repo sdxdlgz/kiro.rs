@@ -18,6 +18,10 @@ pub struct KiroCredentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
 
+    /// CSRF Token
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub csrf_token: Option<String>,
+
     /// Profile ARN
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_arn: Option<String>,
@@ -34,6 +38,10 @@ pub struct KiroCredentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 
+    /// Region
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+
     /// OIDC Client ID (IdC 认证需要)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
@@ -45,6 +53,10 @@ pub struct KiroCredentials {
     /// IdC Start URL (IdC 认证需要)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_url: Option<String>,
+
+    /// 用户邮箱
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 impl KiroCredentials {
@@ -91,19 +103,23 @@ mod tests {
         let json = r#"{
             "accessToken": "test_token",
             "refreshToken": "test_refresh",
+            "csrfToken": "test_csrf",
             "profileArn": "arn:aws:test",
             "expiresAt": "2024-01-01T00:00:00Z",
             "authMethod": "social",
-            "provider": "Google"
+            "provider": "Google",
+            "region": "us-east-1"
         }"#;
 
         let creds = KiroCredentials::from_json(json).unwrap();
         assert_eq!(creds.access_token, Some("test_token".to_string()));
         assert_eq!(creds.refresh_token, Some("test_refresh".to_string()));
+        assert_eq!(creds.csrf_token, Some("test_csrf".to_string()));
         assert_eq!(creds.profile_arn, Some("arn:aws:test".to_string()));
         assert_eq!(creds.expires_at, Some("2024-01-01T00:00:00Z".to_string()));
         assert_eq!(creds.auth_method, Some("social".to_string()));
         assert_eq!(creds.provider, Some("Google".to_string()));
+        assert_eq!(creds.region, Some("us-east-1".to_string()));
     }
 
     #[test]
@@ -122,10 +138,12 @@ mod tests {
         let creds = KiroCredentials {
             access_token: Some("token".to_string()),
             refresh_token: None,
+            csrf_token: None,
             profile_arn: None,
             expires_at: None,
             auth_method: Some("social".to_string()),
             provider: None,
+            region: None,
             client_id: None,
             client_secret: None,
             start_url: None,

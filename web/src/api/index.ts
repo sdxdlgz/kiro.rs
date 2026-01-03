@@ -1,6 +1,6 @@
-import type { ApiResponse, PoolStatus, AccountInfo, AddAccountRequest, ConfigInfo } from '../types';
+import type { ApiResponse, PoolStatus, AccountInfo, AddAccountRequest, ConfigInfo, CheckAccountResponse, BatchCheckAccountResponse, ImportSsoTokenRequest, ImportSsoTokenResponse, AccountCredentialsExport } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8990';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 async function request<T>(path: string, options?: RequestInit): Promise<ApiResponse<T>> {
   try {
@@ -65,4 +65,36 @@ export async function resetAccount(name: string): Promise<ApiResponse<void>> {
 // 获取配置
 export async function getConfig(): Promise<ApiResponse<ConfigInfo>> {
   return request<ConfigInfo>('/admin/config');
+}
+
+// 检查单个账号（获取使用额度和订阅信息）
+export async function checkAccount(name: string): Promise<ApiResponse<CheckAccountResponse>> {
+  return request<CheckAccountResponse>('/admin/accounts/check', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+// 批量检查账号
+export async function batchCheckAccounts(names: string[]): Promise<ApiResponse<BatchCheckAccountResponse>> {
+  return request<BatchCheckAccountResponse>('/admin/accounts/batch-check', {
+    method: 'POST',
+    body: JSON.stringify({ names }),
+  });
+}
+
+// 从 SSO Token 导入账号
+export async function importSsoToken(data: ImportSsoTokenRequest): Promise<ApiResponse<ImportSsoTokenResponse>> {
+  return request<ImportSsoTokenResponse>('/admin/accounts/import-sso', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// 获取账号完整凭证（用于导出）
+export async function getCredentials(names?: string[]): Promise<ApiResponse<AccountCredentialsExport[]>> {
+  return request<AccountCredentialsExport[]>('/admin/accounts/credentials', {
+    method: 'POST',
+    body: JSON.stringify({ names: names || [] }),
+  });
 }

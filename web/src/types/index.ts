@@ -1,33 +1,14 @@
-// 账号信息
-export interface AccountInfo {
-  name: string;
-  healthy: boolean;
-  request_count: number;
-  failure_count: number;
-  in_pool: boolean;
-  profile_arn?: string;
-  auth_method?: string;
-  provider?: string;
-}
+// 从 account.ts 导出所有类型
+export * from './account';
 
-// 轮换池状态
+// 轮换池状态 (使用 account.ts 中的 AccountInfo)
+import type { AccountInfo } from './account';
+
 export interface PoolStatus {
   total_accounts: number;
   healthy_accounts: number;
   total_requests: number;
   accounts: AccountInfo[];
-}
-
-// 添加账号请求
-export interface AddAccountRequest {
-  name: string;
-  accessToken: string;
-  refreshToken: string;
-  profileArn?: string;
-  expiresAt?: string;
-  authMethod?: string;
-  provider?: string;
-  addToPool?: boolean;
 }
 
 // 配置信息
