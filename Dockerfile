@@ -1,5 +1,5 @@
 # 构建后端
-FROM rust:1.83-slim as backend-builder
+FROM rust:latest as backend-builder
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
