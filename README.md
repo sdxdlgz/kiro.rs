@@ -304,7 +304,7 @@ server {
 
 | 字段 | 类型 | 默认值 | 描述 |
 |------|------|--------|------|
-| `host` | string | `127.0.0.1` | 服务监听地址 |
+| `host` | string | `0.0.0.0` | 服务监听地址 |
 | `port` | number | `8990` | 服务监听端口 |
 | `apiKey` | string | - | 自定义 API Key（用于客户端认证） |
 | `region` | string | `us-east-1` | AWS 区域 |
