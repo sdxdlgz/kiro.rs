@@ -13,6 +13,7 @@ use kiro::model::credentials::KiroCredentials;
 use kiro::provider::KiroProvider;
 use model::config::Config;
 use model::arg::Args;
+use tower_http::services::{ServeDir, ServeFile};
 
 #[tokio::main]
 async fn main() {
@@ -112,9 +113,29 @@ async fn main() {
     let anthropic_router = anthropic::create_router_with_provider(&api_key, Some(kiro_provider), profile_arn);
     let admin_router = admin::router::create_admin_router(admin_state);
 
+    // 静态文件服务（Web 管理界面）
+    let web_dist_path = PathBuf::from("web/dist");
+    let serve_web = if web_dist_path.exists() {
+        tracing::info!("启用 Web 管理界面: {}", web_dist_path.display());
+        Some(
+            ServeDir::new(&web_dist_path)
+                .not_found_service(ServeFile::new(web_dist_path.join("index.html")))
+        )
+    } else {
+        tracing::warn!("Web 管理界面未找到: {}，跳过静态文件服务", web_dist_path.display());
+        None
+    };
+
     let app = Router::new()
         .merge(anthropic_router)
         .nest("/admin", admin_router);
+
+    // 如果有 Web 界面，添加静态文件服务
+    let app = if let Some(serve_dir) = serve_web {
+        app.fallback_service(serve_dir)
+    } else {
+        app
+    };
 
     // 启动服务器
     let addr = format!("{}:{}", config.host, config.port);
@@ -132,6 +153,9 @@ async fn main() {
     tracing::info!("  POST /admin/accounts/refresh");
     tracing::info!("  POST /admin/accounts/reset");
     tracing::info!("  GET  /admin/config");
+    if web_dist_path.exists() {
+        tracing::info!("Web 管理界面: http://{}", addr);
+    }
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
