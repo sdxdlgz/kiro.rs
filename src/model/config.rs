@@ -61,7 +61,7 @@ fn default_host() -> String {
 }
 
 fn default_port() -> u16 {
-    8080
+    8990
 }
 
 fn default_region() -> String {

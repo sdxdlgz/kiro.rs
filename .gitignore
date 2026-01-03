@@ -6,3 +6,11 @@
 /.idea
 /test.json
 /Cargo.lock
+
+# 凭证目录（保留 .gitkeep）
+/credentials/*.json
+
+# 前端构建产物
+/web/node_modules
+/web/dist
+/web/coverage
