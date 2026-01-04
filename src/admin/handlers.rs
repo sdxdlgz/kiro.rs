@@ -28,6 +28,8 @@ pub struct AdminState {
     pub credentials_dir: PathBuf,
     /// 数据库连接（用于多Key分发和用量统计）
     pub database: Option<Arc<Database>>,
+    /// 管理员 API Key（用于认证）
+    pub admin_api_key: String,
 }
 
 impl AdminState {
@@ -36,12 +38,14 @@ impl AdminState {
         config: Config,
         credentials_dir: PathBuf,
         database: Option<Arc<Database>>,
+        admin_api_key: String,
     ) -> Self {
         Self {
             account_pool,
             config,
             credentials_dir,
             database,
+            admin_api_key,
         }
     }
 }

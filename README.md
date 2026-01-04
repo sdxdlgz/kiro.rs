@@ -29,6 +29,8 @@
 
 ### Admin API
 
+**注意：所有 Admin API 都需要认证**，使用与 Anthropic API 相同的 `apiKey`。
+
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/admin/pool/status` | GET | 获取轮换池状态 |
@@ -145,6 +147,8 @@ credentials/
 ### 5. 访问 Web 管理界面
 
 启动服务后，访问 `http://127.0.0.1:8990` 即可打开 Web 管理界面。
+
+**首次访问需要登录**，输入配置文件中的 `apiKey` 作为管理员密码。
 
 功能包括：
 - **仪表盘**: 查看轮换池状态、账号健康度、额度统计
@@ -406,6 +410,7 @@ kiro-rs/
 ├── web/                        # Web 管理界面
 │   ├── src/
 │   │   ├── pages/              # 页面组件
+│   │   │   ├── Login.tsx       # 登录页面
 │   │   │   ├── Dashboard.tsx   # 仪表盘
 │   │   │   ├── Accounts.tsx    # 账号管理
 │   │   │   ├── ApiKeys.tsx     # API Key 管理

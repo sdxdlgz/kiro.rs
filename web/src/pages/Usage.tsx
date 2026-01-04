@@ -220,7 +220,8 @@ export function Usage() {
                 onChange={setSelectedKeyId}
                 options={[
                   { value: '', label: '全部' },
-                  ...apiKeys.map((key) => ({ value: key.id.toString(), label: key.name }))
+                  { value: '0', label: 'admin' },
+                  ...apiKeys.filter(key => key.id !== 0).map((key) => ({ value: key.id.toString(), label: key.name }))
                 ]}
                 placeholder="选择 API Key"
               />

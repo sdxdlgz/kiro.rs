@@ -9,15 +9,17 @@ import {
   Sun,
   Moon,
   Key,
-  BarChart3
+  BarChart3,
+  LogOut
 } from 'lucide-react'
 
 interface SidebarProps {
   currentPage: string
   onNavigate: (page: string) => void
+  onLogout?: () => void
 }
 
-export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
+export function Sidebar({ currentPage, onNavigate, onLogout }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
   const { theme, toggleTheme } = useTheme()
 
@@ -118,8 +120,8 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         })}
       </nav>
 
-      {/* 底部：主题切换 */}
-      <div className="relative p-3 border-t border-border">
+      {/* 底部：主题切换和登出 */}
+      <div className="relative p-3 border-t border-border space-y-1.5">
         <button
           onClick={toggleTheme}
           className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground transition-all ${collapsed ? 'justify-center' : ''}`}
@@ -134,6 +136,19 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             <span className="text-sm">{theme === 'dark' ? '白天模式' : '夜间模式'}</span>
           )}
         </button>
+
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all ${collapsed ? 'justify-center' : ''}`}
+            title={collapsed ? '退出登录' : undefined}
+          >
+            <LogOut className="h-4 w-4 flex-shrink-0" />
+            {!collapsed && (
+              <span className="text-sm">退出登录</span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* 版本信息 */}

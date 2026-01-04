@@ -2,15 +2,51 @@ import type { ApiResponse, PoolStatus, AccountInfo, AddAccountRequest, ConfigInf
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
+// 获取 Admin API Key（从 localStorage 或环境变量）
+function getAdminApiKey(): string | null {
+  return localStorage.getItem('adminApiKey') || import.meta.env.VITE_ADMIN_API_KEY || null;
+}
+
+// 设置 Admin API Key
+export function setAdminApiKey(key: string): void {
+  localStorage.setItem('adminApiKey', key);
+}
+
+// 清除 Admin API Key
+export function clearAdminApiKey(): void {
+  localStorage.removeItem('adminApiKey');
+}
+
+// 检查是否已设置 Admin API Key
+export function hasAdminApiKey(): boolean {
+  return !!getAdminApiKey();
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<ApiResponse<T>> {
   try {
+    const apiKey = getAdminApiKey();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...options?.headers as Record<string, string>,
+    };
+
+    if (apiKey) {
+      headers['x-api-key'] = apiKey;
+    }
+
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
+      headers,
     });
+
+    // 处理 401 未授权错误
+    if (response.status === 401) {
+      return {
+        success: false,
+        error: '认证失败，请检查 API Key 是否正确',
+      };
+    }
+
     return await response.json();
   } catch (error) {
     return {
@@ -134,7 +170,7 @@ export async function deleteApiKey(id: number): Promise<ApiResponse<void>> {
 // 查询用量统计
 export async function queryUsage(params?: UsageQueryParams): Promise<ApiResponse<UsageResponse>> {
   const searchParams = new URLSearchParams();
-  if (params?.apiKeyId) searchParams.set('apiKeyId', params.apiKeyId.toString());
+  if (params?.apiKeyId !== undefined) searchParams.set('apiKeyId', params.apiKeyId.toString());
   if (params?.model) searchParams.set('model', params.model);
   if (params?.startTime) searchParams.set('startTime', params.startTime);
   if (params?.endTime) searchParams.set('endTime', params.endTime);
@@ -148,7 +184,7 @@ export async function queryUsage(params?: UsageQueryParams): Promise<ApiResponse
 // 导出用量记录为 XLSX 文件
 export async function exportUsage(params?: UsageQueryParams): Promise<Blob> {
   const searchParams = new URLSearchParams();
-  if (params?.apiKeyId) searchParams.set('apiKeyId', params.apiKeyId.toString());
+  if (params?.apiKeyId !== undefined) searchParams.set('apiKeyId', params.apiKeyId.toString());
   if (params?.model) searchParams.set('model', params.model);
   if (params?.startTime) searchParams.set('startTime', params.startTime);
   if (params?.endTime) searchParams.set('endTime', params.endTime);
@@ -156,8 +192,17 @@ export async function exportUsage(params?: UsageQueryParams): Promise<Blob> {
   const queryString = searchParams.toString();
   const path = queryString ? `/admin/usage/export?${queryString}` : '/admin/usage/export';
 
-  const response = await fetch(`${API_BASE}${path}`);
+  const apiKey = localStorage.getItem('adminApiKey') || import.meta.env.VITE_ADMIN_API_KEY || '';
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers['x-api-key'] = apiKey;
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, { headers });
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('认证失败，请检查 API Key');
+    }
     throw new Error('导出失败');
   }
   return await response.blob();

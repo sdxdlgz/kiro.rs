@@ -506,30 +506,27 @@ async fn handle_non_stream_request(
         }
     });
 
-    // 记录用量（非管理员 Key 才记录）
+    // 记录用量
     if let (Some(db), Some(auth_key)) = (&database, &auth_key) {
-        if auth_key.id > 0 {
-            // 非管理员 Key，记录用量
-            let record_result = crate::db::usage::record_usage(
-                db.as_ref(),
-                auth_key.id,
-                model.to_string(),
-                final_input_tokens as i64,
-                output_tokens as i64,
-                Some(request_id.clone()),
-            );
+        let record_result = crate::db::usage::record_usage(
+            db.as_ref(),
+            auth_key.id,
+            model.to_string(),
+            final_input_tokens as i64,
+            output_tokens as i64,
+            Some(request_id.clone()),
+        );
 
-            if let Err(e) = record_result {
-                tracing::warn!("记录用量失败: {}", e);
-            } else {
-                tracing::debug!(
-                    "记录用量成功: api_key_id={}, model={}, input_tokens={}, output_tokens={}",
-                    auth_key.id,
-                    model,
-                    final_input_tokens,
-                    output_tokens
-                );
-            }
+        if let Err(e) = record_result {
+            tracing::warn!("记录用量失败: {}", e);
+        } else {
+            tracing::debug!(
+                "记录用量成功: api_key_id={}, model={}, input_tokens={}, output_tokens={}",
+                auth_key.id,
+                model,
+                final_input_tokens,
+                output_tokens
+            );
         }
     }
 

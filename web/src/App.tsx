@@ -1,13 +1,58 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ThemeProvider } from './hooks/useTheme'
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './pages/Dashboard'
 import { Accounts } from './pages/Accounts'
 import { ApiKeys } from './pages/ApiKeys'
 import { Usage } from './pages/Usage'
+import { Login } from './pages/Login'
+import { hasAdminApiKey, clearAdminApiKey, getPoolStatus } from './api'
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('dashboard')
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [checkingAuth, setCheckingAuth] = useState(true)
+
+  // 检查是否已有有效的 API Key
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (hasAdminApiKey()) {
+        // 验证 API Key 是否有效
+        const result = await getPoolStatus()
+        if (result.success) {
+          setIsAuthenticated(true)
+        } else {
+          // Key 无效，清除
+          clearAdminApiKey()
+        }
+      }
+      setCheckingAuth(false)
+    }
+    checkAuth()
+  }, [])
+
+  const handleLogin = () => {
+    setIsAuthenticated(true)
+  }
+
+  const handleLogout = () => {
+    clearAdminApiKey()
+    setIsAuthenticated(false)
+  }
+
+  // 检查认证状态中
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="h-8 w-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  // 未认证，显示登录页
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />
+  }
 
   const renderPage = () => {
     switch (currentPage) {
@@ -34,7 +79,7 @@ function AppContent() {
       </div>
 
       {/* 侧边栏 */}
-      <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} />
+      <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLogout={handleLogout} />
 
       {/* 主内容区 */}
       <main className="relative flex-1 overflow-auto">

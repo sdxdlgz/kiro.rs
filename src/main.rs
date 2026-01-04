@@ -122,6 +122,7 @@ async fn main() {
         config.clone(),
         credentials_dir,
         database.clone(),
+        api_key.clone(),
     );
 
     // 构建路由

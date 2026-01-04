@@ -472,8 +472,9 @@ pub fn query_usage_for_export(db: &Database, filters: UsageFilters) -> Result<Ve
     let conn = conn.lock().unwrap();
 
     let mut query = String::from(
-        "SELECT ur.id, ur.api_key_id, COALESCE(ak.name, 'Unknown') as key_name, ur.model,
-                ur.input_tokens, ur.output_tokens, ur.request_time, ur.request_id
+        "SELECT ur.id, ur.api_key_id,
+                CASE WHEN ur.api_key_id = 0 THEN 'admin' ELSE COALESCE(ak.name, 'Unknown') END as key_name,
+                ur.model, ur.input_tokens, ur.output_tokens, ur.request_time, ur.request_id
          FROM usage_records ur
          LEFT JOIN api_keys ak ON ur.api_key_id = ak.id
          WHERE 1=1"

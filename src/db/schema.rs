@@ -75,6 +75,25 @@ pub fn init_schema(db: &Database) -> Result<()> {
         )?;
     }
 
+    // 确保 admin key 记录存在（id=0）
+    // 这是为了让管理员 key 的用量记录能够正确关联
+    let admin_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM api_keys WHERE id = 0",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+
+    if !admin_exists {
+        conn.execute(
+            "INSERT INTO api_keys (id, key_hash, key_prefix, name, enabled, created_at)
+             VALUES (0, 'admin', 'admin', 'admin', 1, datetime('now'))",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 

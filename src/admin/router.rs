@@ -1,12 +1,67 @@
 //! Admin API 路由配置
 
 use axum::{
+    body::Body,
+    extract::State,
+    http::{Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post, put, delete},
     Router,
 };
 use tower_http::cors::{Any, CorsLayer};
 
 use super::handlers::*;
+
+/// Admin API 认证中间件
+async fn admin_auth_middleware(
+    State(state): State<AdminState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    // 从请求头获取 API Key
+    let auth_header = request
+        .headers()
+        .get("x-api-key")
+        .or_else(|| request.headers().get("authorization"))
+        .and_then(|v| v.to_str().ok());
+
+    let api_key = match auth_header {
+        Some(key) => {
+            // 支持 "Bearer xxx" 格式
+            if key.starts_with("Bearer ") {
+                key.trim_start_matches("Bearer ").to_string()
+            } else {
+                key.to_string()
+            }
+        }
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Missing API Key. Use x-api-key header or Authorization: Bearer <key>",
+            )
+                .into_response();
+        }
+    };
+
+    // 验证 API Key（使用常量时间比较防止时序攻击）
+    if !constant_time_eq(&api_key, &state.admin_api_key) {
+        return (StatusCode::UNAUTHORIZED, "Invalid API Key").into_response();
+    }
+
+    next.run(request).await
+}
+
+/// 常量时间字符串比较（防止时序攻击）
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
 
 /// 创建 Admin API 路由
 pub fn create_admin_router(state: AdminState) -> Router {
@@ -36,6 +91,7 @@ pub fn create_admin_router(state: AdminState) -> Router {
         // 用量查询
         .route("/usage", get(query_usage))
         .route("/usage/export", get(export_usage))
+        .layer(middleware::from_fn_with_state(state.clone(), admin_auth_middleware))
         .layer(cors)
         .with_state(state)
 }
