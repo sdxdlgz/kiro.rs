@@ -1,10 +1,12 @@
 mod admin;
 mod anthropic;
+mod db;
 mod kiro;
 mod model;
 pub mod token;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use axum::Router;
 use clap::Parser;
@@ -40,6 +42,18 @@ async fn main() {
         tracing::error!("配置文件中未设置 apiKey");
         std::process::exit(1);
     });
+
+    // 初始化数据库（用于多Key分发和用量统计）
+    let database = match db::Database::new("kiro.db") {
+        Ok(db) => {
+            tracing::info!("数据库初始化成功: kiro.db");
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            tracing::warn!("数据库初始化失败，多Key分发功能将不可用: {}", e);
+            None
+        }
+    };
 
     // 创建账号池配置
     let pool_config = AccountPoolConfig {
@@ -107,10 +121,16 @@ async fn main() {
         account_pool_arc,
         config.clone(),
         credentials_dir,
+        database.clone(),
     );
 
     // 构建路由
-    let anthropic_router = anthropic::create_router_with_provider(&api_key, Some(kiro_provider), profile_arn);
+    let anthropic_router = anthropic::create_router_with_provider_and_db(
+        &api_key,
+        Some(kiro_provider),
+        profile_arn,
+        database,
+    );
     let admin_router = admin::router::create_admin_router(admin_state);
 
     // 静态文件服务（Web 管理界面）
@@ -153,6 +173,13 @@ async fn main() {
     tracing::info!("  POST /admin/accounts/refresh");
     tracing::info!("  POST /admin/accounts/reset");
     tracing::info!("  GET  /admin/config");
+    tracing::info!("API Key 管理:");
+    tracing::info!("  POST /admin/api-keys");
+    tracing::info!("  GET  /admin/api-keys");
+    tracing::info!("  PUT  /admin/api-keys/:id");
+    tracing::info!("  DELETE /admin/api-keys/:id");
+    tracing::info!("用量统计:");
+    tracing::info!("  GET  /admin/usage");
     if web_dist_path.exists() {
         tracing::info!("Web 管理界面: http://{}", addr);
     }

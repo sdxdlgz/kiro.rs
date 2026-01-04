@@ -147,6 +147,7 @@ mod tests {
             client_id: None,
             client_secret: None,
             start_url: None,
+            email: None,
         };
 
         let json = creds.to_pretty_json().unwrap();

@@ -28,3 +28,74 @@ export interface ApiResponse<T> {
   data?: T;
   error?: string;
 }
+
+// ============ API Key 管理 ============
+
+// 创建 API Key 请求
+export interface CreateApiKeyRequest {
+  name: string;
+  expiresAt?: string;
+  rateLimit?: number;
+}
+
+// 创建 API Key 响应
+export interface CreateApiKeyResponse {
+  id: number;
+  key: string;
+  name: string;
+  createdAt: string;
+}
+
+// API Key 列表项
+export interface ApiKeyListItem {
+  id: number;
+  keyPrefix: string;
+  name: string;
+  enabled: boolean;
+  createdAt: string;
+  expiresAt?: string;
+  rateLimit?: number;
+}
+
+// 更新 API Key 请求
+export interface UpdateApiKeyRequest {
+  name?: string;
+  enabled?: boolean;
+  rateLimit?: number;
+}
+
+// ============ 用量统计 ============
+
+// 用量查询参数
+export interface UsageQueryParams {
+  apiKeyId?: number;
+  model?: string;
+  startTime?: string;
+  endTime?: string;
+  groupBy?: 'none' | 'model' | 'day' | 'hour';
+}
+
+// 用量汇总数据
+export interface UsageSummaryData {
+  totalRequests: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+// 用量分组数据
+export interface UsageGroupData {
+  key: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cost: number;
+}
+
+// 用量响应
+export interface UsageResponse {
+  summary: UsageSummaryData;
+  groups: UsageGroupData[];
+}

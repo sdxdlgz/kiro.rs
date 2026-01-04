@@ -9,6 +9,7 @@ use axum::{
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
+use crate::db::Database;
 use crate::kiro::account_pool::{AccountPool, AccountState};
 use crate::kiro::model::credentials::KiroCredentials;
 use crate::kiro::token_manager::TokenManager;
@@ -25,14 +26,22 @@ pub struct AdminState {
     pub config: Config,
     /// 凭证目录
     pub credentials_dir: PathBuf,
+    /// 数据库连接（用于多Key分发和用量统计）
+    pub database: Option<Arc<Database>>,
 }
 
 impl AdminState {
-    pub fn new(account_pool: Arc<RwLock<AccountPool>>, config: Config, credentials_dir: PathBuf) -> Self {
+    pub fn new(
+        account_pool: Arc<RwLock<AccountPool>>,
+        config: Config,
+        credentials_dir: PathBuf,
+        database: Option<Arc<Database>>,
+    ) -> Self {
         Self {
             account_pool,
             config,
             credentials_dir,
+            database,
         }
     }
 }
@@ -990,3 +999,412 @@ pub async fn get_credentials(
 
     Json(ApiResponse::success(results))
 }
+
+// ============ API Key 管理 ============
+
+/// 创建新的 API Key
+pub async fn create_api_key(
+    State(state): State<AdminState>,
+    Json(req): Json<CreateApiKeyRequest>,
+) -> Json<ApiResponse<CreateApiKeyResponse>> {
+    // 检查数据库是否存在
+    let Some(db) = &state.database else {
+        return Json(ApiResponse::error("数据库未配置"));
+    };
+
+    // 验证名称
+    if req.name.is_empty() {
+        return Json(ApiResponse::error("API Key 名称不能为空"));
+    }
+
+    // 解析过期时间
+    let expires_at = if let Some(expires_str) = req.expires_at {
+        match chrono::DateTime::parse_from_rfc3339(&expires_str) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => {
+                return Json(ApiResponse::error("过期时间格式无效，请使用 ISO 8601 格式"));
+            }
+        }
+    } else {
+        None
+    };
+
+    // 创建 API Key
+    match crate::db::api_keys::create_api_key(db, req.name.clone(), expires_at, req.rate_limit) {
+        Ok((id, full_key)) => {
+            // 获取创建的 Key 信息
+            match crate::db::api_keys::get_api_key_by_id(db, id) {
+                Ok(Some(key_info)) => {
+                    let response = CreateApiKeyResponse {
+                        id: key_info.id,
+                        key: full_key,
+                        name: key_info.name,
+                        created_at: key_info.created_at.to_rfc3339(),
+                        expires_at: key_info.expires_at.map(|dt| dt.to_rfc3339()),
+                        rate_limit: key_info.rate_limit,
+                    };
+                    Json(ApiResponse::success(response))
+                }
+                Ok(None) => Json(ApiResponse::error("创建成功但无法获取 Key 信息")),
+                Err(e) => Json(ApiResponse::error(format!("获取 Key 信息失败: {}", e))),
+            }
+        }
+        Err(e) => Json(ApiResponse::error(format!("创建 API Key 失败: {}", e))),
+    }
+}
+
+/// 获取所有 API Key 列表
+pub async fn list_api_keys(
+    State(state): State<AdminState>,
+) -> Json<ApiResponse<Vec<ApiKeyListItem>>> {
+    // 检查数据库是否存在
+    let Some(db) = &state.database else {
+        return Json(ApiResponse::error("数据库未配置"));
+    };
+
+    match crate::db::api_keys::list_api_keys(db) {
+        Ok(keys) => {
+            let items: Vec<ApiKeyListItem> = keys
+                .into_iter()
+                .map(|key| ApiKeyListItem {
+                    id: key.id,
+                    key_prefix: key.key_prefix,
+                    name: key.name,
+                    enabled: key.enabled,
+                    created_at: key.created_at.to_rfc3339(),
+                    expires_at: key.expires_at.map(|dt| dt.to_rfc3339()),
+                    rate_limit: key.rate_limit,
+                })
+                .collect();
+            Json(ApiResponse::success(items))
+        }
+        Err(e) => Json(ApiResponse::error(format!("获取 API Key 列表失败: {}", e))),
+    }
+}
+
+/// 更新 API Key
+pub async fn update_api_key(
+    State(state): State<AdminState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(req): Json<UpdateApiKeyRequest>,
+) -> Json<ApiResponse<ApiKeyListItem>> {
+    // 检查数据库是否存在
+    let Some(db) = &state.database else {
+        return Json(ApiResponse::error("数据库未配置"));
+    };
+
+    // 构建更新参数
+    let updates = crate::db::api_keys::ApiKeyUpdate {
+        name: req.name,
+        enabled: req.enabled,
+        rate_limit: req.rate_limit.map(Some),
+        expires_at: None,
+    };
+
+    // 更新 API Key
+    match crate::db::api_keys::update_api_key(db, id, updates) {
+        Ok(true) => {
+            // 获取更新后的信息
+            match crate::db::api_keys::get_api_key_by_id(db, id) {
+                Ok(Some(key_info)) => {
+                    let item = ApiKeyListItem {
+                        id: key_info.id,
+                        key_prefix: key_info.key_prefix,
+                        name: key_info.name,
+                        enabled: key_info.enabled,
+                        created_at: key_info.created_at.to_rfc3339(),
+                        expires_at: key_info.expires_at.map(|dt| dt.to_rfc3339()),
+                        rate_limit: key_info.rate_limit,
+                    };
+                    Json(ApiResponse::success(item))
+                }
+                Ok(None) => Json(ApiResponse::error("更新成功但无法获取 Key 信息")),
+                Err(e) => Json(ApiResponse::error(format!("获取 Key 信息失败: {}", e))),
+            }
+        }
+        Ok(false) => Json(ApiResponse::error("API Key 不存在")),
+        Err(e) => Json(ApiResponse::error(format!("更新 API Key 失败: {}", e))),
+    }
+}
+
+/// 删除 API Key（软删除）
+pub async fn delete_api_key(
+    State(state): State<AdminState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Json<ApiResponse<()>> {
+    // 检查数据库是否存在
+    let Some(db) = &state.database else {
+        return Json(ApiResponse::error("数据库未配置"));
+    };
+
+    match crate::db::api_keys::delete_api_key(db, id) {
+        Ok(true) => {
+            tracing::info!("软删除 API Key: {} (用量记录已保留)", id);
+            Json(ApiResponse::success(()))
+        }
+        Ok(false) => Json(ApiResponse::error("API Key 不存在或已删除")),
+        Err(e) => Json(ApiResponse::error(format!("删除 API Key 失败: {}", e))),
+    }
+}
+
+// ============ 用量查询 ============
+
+/// 查询用量统计
+pub async fn query_usage(
+    State(state): State<AdminState>,
+    axum::extract::Query(params): axum::extract::Query<UsageQueryParams>,
+) -> Json<ApiResponse<UsageResponse>> {
+    // 检查数据库是否存在
+    let Some(db) = &state.database else {
+        return Json(ApiResponse::error("数据库未配置"));
+    };
+
+    // 解析时间参数
+    let start_time = if let Some(start_str) = params.start_time {
+        match chrono::DateTime::parse_from_rfc3339(&start_str) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => {
+                return Json(ApiResponse::error("开始时间格式无效，请使用 ISO 8601 格式"));
+            }
+        }
+    } else {
+        None
+    };
+
+    let end_time = if let Some(end_str) = params.end_time {
+        match chrono::DateTime::parse_from_rfc3339(&end_str) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => {
+                return Json(ApiResponse::error("结束时间格式无效，请使用 ISO 8601 格式"));
+            }
+        }
+    } else {
+        None
+    };
+
+    // 解析分组方式
+    let group_by = match params.group_by.as_deref() {
+        Some("model") => crate::db::usage::GroupBy::Model,
+        Some("day") => crate::db::usage::GroupBy::Day,
+        Some("hour") => crate::db::usage::GroupBy::Hour,
+        Some("none") | None => crate::db::usage::GroupBy::None,
+        Some(other) => {
+            return Json(ApiResponse::error(format!(
+                "无效的分组方式: {}，支持的值: none, model, day, hour",
+                other
+            )));
+        }
+    };
+
+    // 加载价格配置
+    let price_config = match crate::model::price::PriceConfig::load("price.json") {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::warn!("加载价格配置失败，使用默认配置: {}", e);
+            crate::model::price::PriceConfig::default()
+        }
+    };
+
+    // 查询用量统计
+    match crate::db::usage::aggregate_usage(
+        db,
+        params.api_key_id,
+        params.model.clone(),
+        start_time,
+        end_time,
+        group_by,
+    ) {
+        Ok(summary) => {
+            // 使用带模型信息的查询来计算费用
+            let groups_with_model = crate::db::usage::aggregate_usage_with_model(
+                db,
+                params.api_key_id,
+                params.model,
+                start_time,
+                end_time,
+                group_by,
+            ).unwrap_or_default();
+
+            // 计算每个分组的费用（按 key 汇总）
+            use std::collections::HashMap;
+            let mut cost_by_key: HashMap<String, f64> = HashMap::new();
+            let mut total_cost = 0.0;
+
+            for group in &groups_with_model {
+                let cost = price_config
+                    .calculate_cost(&group.model, group.input_tokens as u64, group.output_tokens as u64)
+                    .unwrap_or(0.0);
+                *cost_by_key.entry(group.key.clone()).or_insert(0.0) += cost;
+                total_cost += cost;
+            }
+
+            // 构建分组数据
+            let groups: Vec<UsageGroupData> = summary
+                .groups
+                .into_iter()
+                .map(|group| {
+                    let cost = cost_by_key.get(&group.key).copied().unwrap_or(0.0);
+                    UsageGroupData {
+                        key: group.key,
+                        requests: group.requests,
+                        input_tokens: group.input_tokens,
+                        output_tokens: group.output_tokens,
+                        total_tokens: group.total_tokens,
+                        cost,
+                    }
+                })
+                .collect();
+
+            let response = UsageResponse {
+                summary: UsageSummaryData {
+                    total_requests: summary.total_requests,
+                    total_input_tokens: summary.total_input_tokens,
+                    total_output_tokens: summary.total_output_tokens,
+                    total_tokens: summary.total_tokens,
+                    total_cost,
+                },
+                groups,
+            };
+
+            Json(ApiResponse::success(response))
+        }
+        Err(e) => Json(ApiResponse::error(format!("查询用量统计失败: {}", e))),
+    }
+}
+
+// ============ 用量导出 ============
+
+use axum::{
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+};
+use rust_xlsxwriter::{Workbook, Format};
+
+/// 导出用量记录为 XLSX 文件
+pub async fn export_usage(
+    State(state): State<AdminState>,
+    axum::extract::Query(params): axum::extract::Query<UsageQueryParams>,
+) -> Response {
+    // 检查数据库是否存在
+    let Some(db) = &state.database else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "数据库未配置").into_response();
+    };
+
+    // 解析时间参数
+    let start_time = if let Some(start_str) = params.start_time {
+        match chrono::DateTime::parse_from_rfc3339(&start_str) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, "开始时间格式无效").into_response();
+            }
+        }
+    } else {
+        None
+    };
+
+    let end_time = if let Some(end_str) = params.end_time {
+        match chrono::DateTime::parse_from_rfc3339(&end_str) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, "结束时间格式无效").into_response();
+            }
+        }
+    } else {
+        None
+    };
+
+    // 构建查询过滤器
+    let filters = crate::db::usage::UsageFilters {
+        api_key_id: params.api_key_id,
+        model: params.model,
+        start_time,
+        end_time,
+        limit: None,
+        offset: None,
+    };
+
+    // 查询用量记录
+    let records = match crate::db::usage::query_usage_for_export(db, filters) {
+        Ok(records) => records,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("查询失败: {}", e)).into_response();
+        }
+    };
+
+    // 加载价格配置
+    let price_config = match crate::model::price::PriceConfig::load("price.json") {
+        Ok(config) => config,
+        Err(_) => crate::model::price::PriceConfig::default(),
+    };
+
+    // 创建 XLSX 工作簿
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+
+    // 设置表头格式
+    let header_format = Format::new()
+        .set_bold()
+        .set_background_color(rust_xlsxwriter::Color::RGB(0x4472C4))
+        .set_font_color(rust_xlsxwriter::Color::White);
+
+    // 设置费用列格式（6位小数）
+    let cost_format = Format::new().set_num_format("0.000000");
+
+    // 写入表头
+    let headers = ["请求时间", "Key名称", "模型", "输入Token", "输出Token", "总Token", "费用($)", "请求ID"];
+    for (col, header) in headers.iter().enumerate() {
+        if let Err(e) = worksheet.write_string_with_format(0, col as u16, *header, &header_format) {
+            tracing::error!("写入表头失败: {}", e);
+        }
+    }
+
+    // 写入数据
+    for (row, record) in records.iter().enumerate() {
+        let row = (row + 1) as u32;
+        let total_tokens = record.input_tokens + record.output_tokens;
+        let cost = price_config
+            .calculate_cost(&record.model, record.input_tokens as u64, record.output_tokens as u64)
+            .unwrap_or(0.0);
+
+        let _ = worksheet.write_string(row, 0, record.request_time.format("%Y-%m-%d %H:%M:%S").to_string());
+        let _ = worksheet.write_string(row, 1, &record.key_name);
+        let _ = worksheet.write_string(row, 2, &record.model);
+        let _ = worksheet.write_number(row, 3, record.input_tokens as f64);
+        let _ = worksheet.write_number(row, 4, record.output_tokens as f64);
+        let _ = worksheet.write_number(row, 5, total_tokens as f64);
+        let _ = worksheet.write_number_with_format(row, 6, cost, &cost_format);
+        let _ = worksheet.write_string(row, 7, record.request_id.as_deref().unwrap_or(""));
+    }
+
+    // 设置列宽
+    let _ = worksheet.set_column_width(0, 20.0); // 请求时间
+    let _ = worksheet.set_column_width(1, 15.0); // Key名称
+    let _ = worksheet.set_column_width(2, 30.0); // 模型
+    let _ = worksheet.set_column_width(3, 12.0); // 输入Token
+    let _ = worksheet.set_column_width(4, 12.0); // 输出Token
+    let _ = worksheet.set_column_width(5, 12.0); // 总Token
+    let _ = worksheet.set_column_width(6, 12.0); // 费用
+    let _ = worksheet.set_column_width(7, 40.0); // 请求ID
+
+    // 保存到内存缓冲区
+    let buffer = match workbook.save_to_buffer() {
+        Ok(buf) => buf,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("生成文件失败: {}", e)).into_response();
+        }
+    };
+
+    // 生成文件名
+    let filename = format!("usage-{}.xlsx", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+    // 返回文件
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            (header::CONTENT_DISPOSITION, &format!("attachment; filename=\"{}\"", filename)),
+        ],
+        buffer,
+    ).into_response()
+}
+

@@ -1,11 +1,14 @@
 //! Anthropic API 路由配置
 
+use std::sync::Arc;
+
 use axum::{
     middleware,
     routing::{get, post},
     Router,
 };
 
+use crate::db::Database;
 use crate::kiro::provider::KiroProvider;
 
 use super::{
@@ -35,12 +38,25 @@ pub fn create_router_with_provider(
     kiro_provider: Option<KiroProvider>,
     profile_arn: Option<String>,
 ) -> Router {
+    create_router_with_provider_and_db(api_key, kiro_provider, profile_arn, None)
+}
+
+/// 创建带有 KiroProvider 和数据库的 Anthropic API 路由
+pub fn create_router_with_provider_and_db(
+    api_key: impl Into<String>,
+    kiro_provider: Option<KiroProvider>,
+    profile_arn: Option<String>,
+    database: Option<Arc<Database>>,
+) -> Router {
     let mut state = AppState::new(api_key);
     if let Some(provider) = kiro_provider {
         state = state.with_kiro_provider(provider);
     }
     if let Some(arn) = profile_arn {
         state = state.with_profile_arn(arn);
+    }
+    if let Some(db) = database {
+        state = state.with_database(db);
     }
 
     // 需要认证的 /v1 路由

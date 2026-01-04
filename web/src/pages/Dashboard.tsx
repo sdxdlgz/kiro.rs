@@ -111,7 +111,7 @@ export function Dashboard() {
               <Server className="h-8 w-8 text-primary" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">Kiro.rs 管理面板</h1>
+              <h1 className="text-2xl font-bold text-foreground">小王养鸡场</h1>
               <p className="text-muted-foreground mt-1">多账号轮换池状态监控与管理</p>
             </div>
           </div>

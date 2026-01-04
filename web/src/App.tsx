@@ -3,6 +3,8 @@ import { ThemeProvider } from './hooks/useTheme'
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './pages/Dashboard'
 import { Accounts } from './pages/Accounts'
+import { ApiKeys } from './pages/ApiKeys'
+import { Usage } from './pages/Usage'
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('dashboard')
@@ -13,6 +15,10 @@ function AppContent() {
         return <Dashboard />
       case 'accounts':
         return <Accounts />
+      case 'api-keys':
+        return <ApiKeys />
+      case 'usage':
+        return <Usage />
       default:
         return <Dashboard />
     }

@@ -10,15 +10,29 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 
+use crate::db::Database;
 use crate::kiro::provider::KiroProvider;
 
 use super::types::ErrorResponse;
 
+/// 已认证的 API Key 信息（存储在请求扩展中）
+#[derive(Clone, Debug)]
+pub struct AuthenticatedKey {
+    /// API Key ID（数据库中的ID）
+    pub id: i64,
+    /// Key 名称
+    pub name: String,
+    /// 速率限制（可选）
+    pub rate_limit: Option<i64>,
+}
+
 /// 应用共享状态
 #[derive(Clone)]
 pub struct AppState {
-    /// API 密钥
-    pub api_key: String,
+    /// 管理员 API 密钥（用于后向兼容和管理操作）
+    pub admin_api_key: String,
+    /// 数据库连接（用于多Key认证）
+    pub database: Option<Arc<Database>>,
     /// Kiro Provider（可选，用于实际 API 调用）
     pub kiro_provider: Option<Arc<KiroProvider>>,
     /// Profile ARN（可选，用于请求）
@@ -27,12 +41,19 @@ pub struct AppState {
 
 impl AppState {
     /// 创建新的应用状态
-    pub fn new(api_key: impl Into<String>) -> Self {
+    pub fn new(admin_api_key: impl Into<String>) -> Self {
         Self {
-            api_key: api_key.into(),
+            admin_api_key: admin_api_key.into(),
+            database: None,
             kiro_provider: None,
             profile_arn: None,
         }
+    }
+
+    /// 设置数据库连接
+    pub fn with_database(mut self, db: Arc<Database>) -> Self {
+        self.database = Some(db);
+        self
     }
 
     /// 设置 KiroProvider
@@ -101,18 +122,62 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 /// API Key 认证中间件
+///
+/// 认证优先级：
+/// 1. 首先检查是否是管理员 API Key（后向兼容）
+/// 2. 如果配置了数据库，则从数据库验证分发的 Key
 pub async fn auth_middleware(
     State(state): State<AppState>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
-    match extract_api_key(&request) {
-        Some(key) if constant_time_eq(&key, &state.api_key) => next.run(request).await,
-        _ => {
+    let key = match extract_api_key(&request) {
+        Some(k) => k,
+        None => {
             let error = ErrorResponse::authentication_error();
-            (StatusCode::UNAUTHORIZED, Json(error)).into_response()
+            return (StatusCode::UNAUTHORIZED, Json(error)).into_response();
+        }
+    };
+
+    // 1. 首先检查是否是管理员 API Key（后向兼容）
+    if constant_time_eq(&key, &state.admin_api_key) {
+        // 管理员 Key，使用特殊的 AuthenticatedKey
+        let auth_key = AuthenticatedKey {
+            id: 0, // 管理员 Key 使用 ID 0
+            name: "admin".to_string(),
+            rate_limit: None,
+        };
+        request.extensions_mut().insert(auth_key);
+        return next.run(request).await;
+    }
+
+    // 2. 如果配置了数据库，从数据库验证分发的 Key
+    if let Some(ref db) = state.database {
+        match crate::db::api_keys::verify_api_key(db, &key) {
+            Ok(Some(key_info)) => {
+                // Key 有效，将信息存入请求扩展
+                let auth_key = AuthenticatedKey {
+                    id: key_info.id,
+                    name: key_info.name,
+                    rate_limit: key_info.rate_limit,
+                };
+                request.extensions_mut().insert(auth_key);
+                return next.run(request).await;
+            }
+            Ok(None) => {
+                // Key 无效或已禁用/过期
+                tracing::debug!("API Key 验证失败: Key 无效或已禁用");
+            }
+            Err(e) => {
+                // 数据库错误
+                tracing::error!("API Key 验证数据库错误: {}", e);
+            }
         }
     }
+
+    // 认证失败
+    let error = ErrorResponse::authentication_error();
+    (StatusCode::UNAUTHORIZED, Json(error)).into_response()
 }
 
 /// CORS 中间件层

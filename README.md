@@ -8,7 +8,10 @@
 - **流式响应**: 支持 SSE (Server-Sent Events) 流式输出
 - **Token 自动刷新**: 自动管理和刷新 OAuth Token，刷新后自动持久化到文件
 - **多账号轮询**: 支持多账号负载均衡，自动故障转移和恢复
-- **Web 管理界面**: 现代化的 Web UI，支持账号管理、额度监控、批量操作
+- **API Key 管理**: 支持创建和管理多个 API Key，每个 Key 可设置独立的速率限制
+- **用量统计**: 详细的 Token 用量统计，支持按模型、时间分组查看
+- **费用计算**: 自动计算 API 调用费用，支持导出 XLSX 报表
+- **Web 管理界面**: 现代化的 Web UI，支持账号管理、API Key 管理、用量监控
 - **Admin API**: RESTful API 用于程序化管理账号和监控状态
 - **Thinking 模式**: 支持 Claude 的 extended thinking 功能
 - **工具调用**: 完整支持 function calling / tool use
@@ -39,6 +42,22 @@
 | `/admin/accounts/import-sso` | POST | 从 SSO Token 导入账号 |
 | `/admin/accounts/credentials` | POST | 获取账号凭证（用于导出） |
 | `/admin/config` | GET | 获取服务配置 |
+
+### API Key 管理 API
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/admin/api-keys` | GET | 获取所有 API Key 列表 |
+| `/admin/api-keys` | POST | 创建新的 API Key |
+| `/admin/api-keys/:id` | PUT | 更新 API Key |
+| `/admin/api-keys/:id` | DELETE | 删除 API Key |
+
+### 用量统计 API
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/admin/usage` | GET | 查询用量统计（支持按模型/天/小时分组） |
+| `/admin/usage/export` | GET | 导出用量记录为 XLSX 文件 |
 
 ## 快速开始
 
@@ -130,6 +149,8 @@ credentials/
 功能包括：
 - **仪表盘**: 查看轮换池状态、账号健康度、额度统计
 - **账号管理**: 添加/删除账号、检查额度、刷新 Token、导入导出
+- **API Key 管理**: 创建/编辑/删除 API Key，设置速率限制
+- **用量统计**: 查看 Token 用量和费用统计，支持按模型/天/小时分组，导出 XLSX 报表
 - **分组和标签**: 对账号进行分组和标签管理（本地存储）
 
 ### 6. 使用 API
@@ -344,20 +365,27 @@ server {
 kiro-rs/
 ├── src/
 │   ├── main.rs                 # 程序入口
+│   ├── lib.rs                  # 库入口
 │   ├── model/                  # 配置和参数模型
 │   │   ├── config.rs           # 应用配置
-│   │   └── arg.rs              # 命令行参数
+│   │   ├── arg.rs              # 命令行参数
+│   │   └── price.rs            # 价格配置和费用计算
+│   ├── db/                     # 数据库模块
+│   │   ├── mod.rs              # 数据库连接管理
+│   │   ├── schema.rs           # 数据库表结构
+│   │   ├── api_keys.rs         # API Key 数据操作
+│   │   └── usage.rs            # 用量记录数据操作
 │   ├── anthropic/              # Anthropic API 兼容层
 │   │   ├── router.rs           # 路由配置
 │   │   ├── handlers.rs         # 请求处理器
-│   │   ├── middleware.rs       # 认证中间件
+│   │   ├── middleware.rs       # 认证中间件（支持 API Key 认证）
 │   │   ├── types.rs            # 类型定义
 │   │   ├── converter.rs        # 协议转换器
 │   │   ├── stream.rs           # 流式响应处理
 │   │   └── token.rs            # Token 估算
 │   ├── admin/                  # Admin API
 │   │   ├── router.rs           # Admin 路由
-│   │   ├── handlers.rs         # Admin 处理器
+│   │   ├── handlers.rs         # Admin 处理器（含 API Key 和用量统计）
 │   │   └── types.rs            # Admin 类型定义
 │   └── kiro/                   # Kiro API 客户端
 │       ├── provider.rs         # API 提供者
@@ -379,12 +407,15 @@ kiro-rs/
 │   ├── src/
 │   │   ├── pages/              # 页面组件
 │   │   │   ├── Dashboard.tsx   # 仪表盘
-│   │   │   └── Accounts.tsx    # 账号管理
+│   │   │   ├── Accounts.tsx    # 账号管理
+│   │   │   ├── ApiKeys.tsx     # API Key 管理
+│   │   │   └── Usage.tsx       # 用量统计
 │   │   ├── components/         # UI 组件
 │   │   ├── hooks/              # React Hooks
 │   │   ├── api/                # API 客户端
 │   │   └── types/              # TypeScript 类型
 │   └── dist/                   # 编译输出
+├── price.json                  # 价格配置文件
 ├── Cargo.toml                  # Rust 项目配置
 ├── config.example.json         # 配置示例
 └── credentials.json            # 凭证文件

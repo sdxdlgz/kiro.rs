@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use axum::{
     body::Body,
     extract::State,
-    http::{header, StatusCode},
+    http::{header, Request, StatusCode},
     response::{IntoResponse, Json, Response},
     Json as JsonExtractor,
 };
@@ -21,7 +21,7 @@ use crate::kiro::model::requests::kiro::KiroRequest;
 use crate::kiro::parser::decoder::EventStreamDecoder;
 
 use super::converter::{convert_request, ConversionError};
-use super::middleware::AppState;
+use super::middleware::{AppState, AuthenticatedKey};
 use super::stream::{SseEvent, StreamContext};
 use super::types::{
     CountTokensRequest, CountTokensResponse, ErrorResponse, MessagesRequest, Model, ModelsResponse,
@@ -74,8 +74,43 @@ pub async fn get_models() -> impl IntoResponse {
 /// 创建消息（对话）
 pub async fn post_messages(
     State(state): State<AppState>,
-    JsonExtractor(payload): JsonExtractor<MessagesRequest>,
+    request: Request<Body>,
 ) -> Response {
+    // 从请求扩展中获取 AuthenticatedKey
+    let auth_key = request.extensions().get::<AuthenticatedKey>().cloned();
+
+    // 读取请求体
+    let body_bytes = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!("读取请求体失败: {}", e);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new(
+                    "invalid_request_error",
+                    format!("读取请求体失败: {}", e),
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    // 解析 JSON
+    let payload: MessagesRequest = match serde_json::from_slice(&body_bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("解析请求 JSON 失败: {}", e);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new(
+                    "invalid_request_error",
+                    format!("解析请求失败: {}", e),
+                )),
+            )
+                .into_response();
+        }
+    };
+
     tracing::info!(
         model = %payload.model,
         max_tokens = %payload.max_tokens,
@@ -154,10 +189,10 @@ pub async fn post_messages(
 
     if payload.stream {
         // 流式响应
-        handle_stream_request(provider, &request_body, &payload.model, input_tokens, thinking_enabled).await
+        handle_stream_request(provider, &request_body, &payload.model, input_tokens, thinking_enabled, auth_key, state.database).await
     } else {
         // 非流式响应
-        handle_non_stream_request(provider, &request_body, &payload.model, input_tokens).await
+        handle_non_stream_request(provider, &request_body, &payload.model, input_tokens, auth_key, state.database).await
     }
 }
 
@@ -168,6 +203,8 @@ async fn handle_stream_request(
     model: &str,
     input_tokens: i32,
     thinking_enabled: bool,
+    auth_key: Option<AuthenticatedKey>,
+    database: Option<std::sync::Arc<crate::db::Database>>,
 ) -> Response {
     // 调用 Kiro API
     let response = match provider.call_api_stream(request_body).await {
@@ -187,6 +224,8 @@ async fn handle_stream_request(
 
     // 创建流处理上下文
     let mut ctx = StreamContext::new_with_thinking(model, input_tokens, thinking_enabled);
+    ctx.auth_key = auth_key;
+    ctx.database = database;
 
     // 生成初始事件
     let initial_events = ctx.generate_initial_events();
@@ -313,6 +352,8 @@ async fn handle_non_stream_request(
     request_body: &str,
     model: &str,
     input_tokens: i32,
+    auth_key: Option<AuthenticatedKey>,
+    database: Option<std::sync::Arc<crate::db::Database>>,
 ) -> Response {
     // 调用 Kiro API
     let response = match provider.call_api(request_body).await {
@@ -447,9 +488,12 @@ async fn handle_non_stream_request(
     // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
     let final_input_tokens = context_input_tokens.unwrap_or(input_tokens);
 
+    // 生成请求 ID
+    let request_id = format!("msg_{}", Uuid::new_v4().to_string().replace('-', ""));
+
     // 构建 Anthropic 响应
     let response_body = json!({
-        "id": format!("msg_{}", Uuid::new_v4().to_string().replace('-', "")),
+        "id": request_id.clone(),
         "type": "message",
         "role": "assistant",
         "content": content,
@@ -461,6 +505,33 @@ async fn handle_non_stream_request(
             "output_tokens": output_tokens
         }
     });
+
+    // 记录用量（非管理员 Key 才记录）
+    if let (Some(db), Some(auth_key)) = (&database, &auth_key) {
+        if auth_key.id > 0 {
+            // 非管理员 Key，记录用量
+            let record_result = crate::db::usage::record_usage(
+                db.as_ref(),
+                auth_key.id,
+                model.to_string(),
+                final_input_tokens as i64,
+                output_tokens as i64,
+                Some(request_id.clone()),
+            );
+
+            if let Err(e) = record_result {
+                tracing::warn!("记录用量失败: {}", e);
+            } else {
+                tracing::debug!(
+                    "记录用量成功: api_key_id={}, model={}, input_tokens={}, output_tokens={}",
+                    auth_key.id,
+                    model,
+                    final_input_tokens,
+                    output_tokens
+                );
+            }
+        }
+    }
 
     (StatusCode::OK, Json(response_body)).into_response()
 }

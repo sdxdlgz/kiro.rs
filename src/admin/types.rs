@@ -301,3 +301,143 @@ pub struct AccountCredentialsExport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
 }
+
+// ============ API Key 管理 ============
+
+/// 创建 API Key 请求
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApiKeyRequest {
+    /// API Key 名称
+    pub name: String,
+    /// 过期时间 (ISO 8601)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    /// 速率限制（每分钟请求数）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<i64>,
+}
+
+/// 创建 API Key 响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApiKeyResponse {
+    /// API Key ID
+    pub id: i64,
+    /// 完整的 API Key（仅在创建时返回）
+    pub key: String,
+    /// API Key 名称
+    pub name: String,
+    /// 创建时间 (ISO 8601)
+    pub created_at: String,
+    /// 过期时间 (ISO 8601)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    /// 速率限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<i64>,
+}
+
+/// API Key 列表项
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyListItem {
+    /// API Key ID
+    pub id: i64,
+    /// API Key 前缀（用于显示）
+    pub key_prefix: String,
+    /// API Key 名称
+    pub name: String,
+    /// 是否启用
+    pub enabled: bool,
+    /// 创建时间 (ISO 8601)
+    pub created_at: String,
+    /// 过期时间 (ISO 8601)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    /// 速率限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<i64>,
+}
+
+/// 更新 API Key 请求
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateApiKeyRequest {
+    /// API Key 名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 是否启用
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// 速率限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<i64>,
+}
+
+// ============ 用量查询 ============
+
+/// 用量查询参数
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageQueryParams {
+    /// API Key ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_id: Option<i64>,
+    /// 模型名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// 开始时间 (ISO 8601)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<String>,
+    /// 结束时间 (ISO 8601)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<String>,
+    /// 分组方式: none, model, day, hour
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<String>,
+}
+
+/// 用量统计摘要
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummaryData {
+    /// 总请求数
+    pub total_requests: i64,
+    /// 总输入 tokens
+    pub total_input_tokens: i64,
+    /// 总输出 tokens
+    pub total_output_tokens: i64,
+    /// 总 tokens
+    pub total_tokens: i64,
+    /// 总费用
+    pub total_cost: f64,
+}
+
+/// 用量分组数据
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageGroupData {
+    /// 分组键（模型名称、日期或小时）
+    pub key: String,
+    /// 请求数
+    pub requests: i64,
+    /// 输入 tokens
+    pub input_tokens: i64,
+    /// 输出 tokens
+    pub output_tokens: i64,
+    /// 总 tokens
+    pub total_tokens: i64,
+    /// 费用
+    pub cost: f64,
+}
+
+/// 用量查询响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageResponse {
+    /// 统计摘要
+    pub summary: UsageSummaryData,
+    /// 分组数据
+    pub groups: Vec<UsageGroupData>,
+}

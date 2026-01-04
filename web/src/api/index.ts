@@ -1,4 +1,4 @@
-import type { ApiResponse, PoolStatus, AccountInfo, AddAccountRequest, ConfigInfo, CheckAccountResponse, BatchCheckAccountResponse, ImportSsoTokenRequest, ImportSsoTokenResponse, AccountCredentialsExport } from '../types';
+import type { ApiResponse, PoolStatus, AccountInfo, AddAccountRequest, ConfigInfo, CheckAccountResponse, BatchCheckAccountResponse, ImportSsoTokenRequest, ImportSsoTokenResponse, AccountCredentialsExport, CreateApiKeyRequest, CreateApiKeyResponse, ApiKeyListItem, UpdateApiKeyRequest, UsageQueryParams, UsageResponse } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -97,4 +97,68 @@ export async function getCredentials(names?: string[]): Promise<ApiResponse<Acco
     method: 'POST',
     body: JSON.stringify({ names: names || [] }),
   });
+}
+
+// ============ API Key 管理 ============
+
+// 创建 API Key
+export async function createApiKey(data: CreateApiKeyRequest): Promise<ApiResponse<CreateApiKeyResponse>> {
+  return request<CreateApiKeyResponse>('/admin/api-keys', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// 获取所有 API Key
+export async function listApiKeys(): Promise<ApiResponse<ApiKeyListItem[]>> {
+  return request<ApiKeyListItem[]>('/admin/api-keys');
+}
+
+// 更新 API Key
+export async function updateApiKey(id: number, data: UpdateApiKeyRequest): Promise<ApiResponse<ApiKeyListItem>> {
+  return request<ApiKeyListItem>(`/admin/api-keys/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+// 删除 API Key
+export async function deleteApiKey(id: number): Promise<ApiResponse<void>> {
+  return request<void>(`/admin/api-keys/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// ============ 用量统计 ============
+
+// 查询用量统计
+export async function queryUsage(params?: UsageQueryParams): Promise<ApiResponse<UsageResponse>> {
+  const searchParams = new URLSearchParams();
+  if (params?.apiKeyId) searchParams.set('apiKeyId', params.apiKeyId.toString());
+  if (params?.model) searchParams.set('model', params.model);
+  if (params?.startTime) searchParams.set('startTime', params.startTime);
+  if (params?.endTime) searchParams.set('endTime', params.endTime);
+  if (params?.groupBy) searchParams.set('groupBy', params.groupBy);
+
+  const queryString = searchParams.toString();
+  const path = queryString ? `/admin/usage?${queryString}` : '/admin/usage';
+  return request<UsageResponse>(path);
+}
+
+// 导出用量记录为 XLSX 文件
+export async function exportUsage(params?: UsageQueryParams): Promise<Blob> {
+  const searchParams = new URLSearchParams();
+  if (params?.apiKeyId) searchParams.set('apiKeyId', params.apiKeyId.toString());
+  if (params?.model) searchParams.set('model', params.model);
+  if (params?.startTime) searchParams.set('startTime', params.startTime);
+  if (params?.endTime) searchParams.set('endTime', params.endTime);
+
+  const queryString = searchParams.toString();
+  const path = queryString ? `/admin/usage/export?${queryString}` : '/admin/usage/export';
+
+  const response = await fetch(`${API_BASE}${path}`);
+  if (!response.ok) {
+    throw new Error('导出失败');
+  }
+  return await response.blob();
 }

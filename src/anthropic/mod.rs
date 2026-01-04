@@ -23,4 +23,4 @@ mod router;
 mod stream;
 pub mod types;
 
-pub use router::create_router_with_provider;
+pub use router::{create_router_with_provider, create_router_with_provider_and_db};

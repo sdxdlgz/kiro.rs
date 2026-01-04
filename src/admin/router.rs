@@ -1,7 +1,7 @@
 //! Admin API 路由配置
 
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put, delete},
     Router,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -30,6 +30,12 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/accounts/credentials", post(get_credentials))
         // 配置
         .route("/config", get(get_config))
+        // API Key 管理
+        .route("/api-keys", get(list_api_keys).post(create_api_key))
+        .route("/api-keys/{id}", put(update_api_key).delete(delete_api_key))
+        // 用量查询
+        .route("/usage", get(query_usage))
+        .route("/usage/export", get(export_usage))
         .layer(cors)
         .with_state(state)
 }

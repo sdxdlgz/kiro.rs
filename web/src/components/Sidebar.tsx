@@ -7,7 +7,9 @@ import {
   ChevronRight,
   Zap,
   Sun,
-  Moon
+  Moon,
+  Key,
+  BarChart3
 } from 'lucide-react'
 
 interface SidebarProps {
@@ -22,6 +24,8 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const navItems = [
     { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard, description: '查看轮换池状态' },
     { id: 'accounts', label: '账号管理', icon: Users, description: '管理 Kiro 账号' },
+    { id: 'api-keys', label: 'API Key', icon: Key, description: '管理分发的 Key' },
+    { id: 'usage', label: '用量统计', icon: BarChart3, description: '查看 Token 用量' },
   ]
 
   return (
@@ -38,7 +42,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             <Zap className="h-5 w-5 text-primary-foreground" />
           </div>
           <div className="min-w-0">
-            <h1 className="font-bold text-foreground truncate">Kiro.rs</h1>
+            <h1 className="font-bold text-foreground truncate">小王养鸡场</h1>
             <p className="text-[10px] text-muted-foreground truncate">管理面板</p>
           </div>
         </div>
