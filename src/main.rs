@@ -15,6 +15,7 @@ use kiro::model::credentials::KiroCredentials;
 use kiro::provider::KiroProvider;
 use model::config::Config;
 use model::arg::Args;
+use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[tokio::main]
@@ -93,6 +94,16 @@ async fn main() {
     // 获取账号池的 Arc 引用（用于 Admin API）
     let account_pool_arc = kiro_provider.get_account_pool();
 
+    // 获取错误日志存储的 Arc 引用（用于 Admin API 共享）
+    let error_log_store = kiro_provider.get_error_log_store();
+
+    // 尝试从文件加载历史错误日志
+    if let Ok(loaded_store) = admin::error_logs::ApiErrorLogStore::load_from_file() {
+        let mut store = error_log_store.write().await;
+        *store = loaded_store;
+        tracing::info!("加载历史错误日志: {} 条", store.len());
+    }
+
     // 打印账号池状态
     let status = kiro_provider.get_pool_status().await;
     tracing::info!("账号池状态: {} 个账号, {} 个健康", status.total, status.healthy);
@@ -123,7 +134,7 @@ async fn main() {
         credentials_dir,
         database.clone(),
         api_key.clone(),
-    );
+    ).with_error_log_store(error_log_store);
 
     // 构建路由
     let anthropic_router = anthropic::create_router_with_provider_and_db(

@@ -117,7 +117,7 @@ export function AccountCardGrid({
                 transform: `translateY(${virtualRow.start + 8}px)` // +8px 为标签光环留空间
               }}
             >
-              <div className="flex gap-4 px-2 items-start">
+              <div className="flex justify-center gap-4 px-2 items-start">
                 {row.map((item) =>
                   item === 'add' ? (
                     <div

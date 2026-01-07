@@ -5,6 +5,7 @@ import { Dashboard } from './pages/Dashboard'
 import { Accounts } from './pages/Accounts'
 import { ApiKeys } from './pages/ApiKeys'
 import { Usage } from './pages/Usage'
+import { ErrorLogs } from './pages/ErrorLogs'
 import { Login } from './pages/Login'
 import { hasAdminApiKey, clearAdminApiKey, getPoolStatus } from './api'
 
@@ -64,6 +65,8 @@ function AppContent() {
         return <ApiKeys />
       case 'usage':
         return <Usage />
+      case 'error-logs':
+        return <ErrorLogs />
       default:
         return <Dashboard />
     }

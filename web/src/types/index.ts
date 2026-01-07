@@ -29,6 +29,21 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
+// ============ 错误日志 ============
+
+// 错误类型
+export type ApiErrorType = '400' | '429' | 'other';
+
+// 错误日志条目
+export interface ApiErrorLogEntry {
+  timestamp: string;
+  account_name: string;
+  status_code: number;
+  error_type: ApiErrorType;
+  message: string;
+  is_stream: boolean;
+}
+
 // ============ API Key 管理 ============
 
 // 创建 API Key 请求

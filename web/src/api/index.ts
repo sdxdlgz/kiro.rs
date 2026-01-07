@@ -1,4 +1,4 @@
-import type { ApiResponse, PoolStatus, AccountInfo, AddAccountRequest, ConfigInfo, CheckAccountResponse, BatchCheckAccountResponse, ImportSsoTokenRequest, ImportSsoTokenResponse, AccountCredentialsExport, CreateApiKeyRequest, CreateApiKeyResponse, ApiKeyListItem, UpdateApiKeyRequest, UsageQueryParams, UsageResponse } from '../types';
+import type { ApiResponse, PoolStatus, AccountInfo, AddAccountRequest, ConfigInfo, CheckAccountResponse, BatchCheckAccountResponse, ImportSsoTokenRequest, ImportSsoTokenResponse, AccountCredentialsExport, CreateApiKeyRequest, CreateApiKeyResponse, ApiKeyListItem, UpdateApiKeyRequest, UsageQueryParams, UsageResponse, ApiErrorLogEntry } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -206,4 +206,18 @@ export async function exportUsage(params?: UsageQueryParams): Promise<Blob> {
     throw new Error('导出失败');
   }
   return await response.blob();
+}
+
+// ============ 错误日志 ============
+
+// 获取错误日志列表
+export async function getErrorLogs(): Promise<ApiResponse<ApiErrorLogEntry[]>> {
+  return request<ApiErrorLogEntry[]>('/admin/error-logs');
+}
+
+// 清空错误日志
+export async function clearErrorLogs(): Promise<ApiResponse<void>> {
+  return request<void>('/admin/error-logs', {
+    method: 'DELETE',
+  });
 }

@@ -91,6 +91,8 @@ pub fn create_admin_router(state: AdminState) -> Router {
         // 用量查询
         .route("/usage", get(query_usage))
         .route("/usage/export", get(export_usage))
+        // 错误日志
+        .route("/error-logs", get(get_error_logs).delete(clear_error_logs))
         .layer(middleware::from_fn_with_state(state.clone(), admin_auth_middleware))
         .layer(cors)
         .with_state(state)

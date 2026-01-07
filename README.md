@@ -7,11 +7,12 @@
 - **Anthropic API 兼容**: 完整支持 Anthropic Claude API 格式
 - **流式响应**: 支持 SSE (Server-Sent Events) 流式输出
 - **Token 自动刷新**: 自动管理和刷新 OAuth Token，刷新后自动持久化到文件
-- **多账号轮询**: 支持多账号负载均衡，自动故障转移和恢复
+- **多账号轮询**: 支持多账号负载均衡，基于使用量比例优先选择，自动故障转移和恢复
 - **API Key 管理**: 支持创建和管理多个 API Key，每个 Key 可设置独立的速率限制
 - **用量统计**: 详细的 Token 用量统计，支持按模型、时间分组查看
 - **费用计算**: 自动计算 API 调用费用，支持导出 XLSX 报表
-- **Web 管理界面**: 现代化的 Web UI，支持账号管理、API Key 管理、用量监控
+- **错误日志**: 记录 API 请求错误（400/429 等），支持持久化和 Web 界面查看
+- **Web 管理界面**: 现代化的 Web UI，支持账号管理、API Key 管理、用量监控、错误日志
 - **Admin API**: RESTful API 用于程序化管理账号和监控状态
 - **Thinking 模式**: 支持 Claude 的 extended thinking 功能
 - **工具调用**: 完整支持 function calling / tool use
@@ -60,6 +61,13 @@
 |------|------|------|
 | `/admin/usage` | GET | 查询用量统计（支持按模型/天/小时分组） |
 | `/admin/usage/export` | GET | 导出用量记录为 XLSX 文件 |
+
+### 错误日志 API
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/admin/error-logs` | GET | 获取错误日志列表（最近 500 条） |
+| `/admin/error-logs` | DELETE | 清空所有错误日志 |
 
 ## 快速开始
 
@@ -390,7 +398,8 @@ kiro-rs/
 │   ├── admin/                  # Admin API
 │   │   ├── router.rs           # Admin 路由
 │   │   ├── handlers.rs         # Admin 处理器（含 API Key 和用量统计）
-│   │   └── types.rs            # Admin 类型定义
+│   │   ├── types.rs            # Admin 类型定义
+│   │   └── error_logs.rs       # 错误日志存储
 │   └── kiro/                   # Kiro API 客户端
 │       ├── provider.rs         # API 提供者
 │       ├── token_manager.rs    # Token 管理
@@ -414,7 +423,8 @@ kiro-rs/
 │   │   │   ├── Dashboard.tsx   # 仪表盘
 │   │   │   ├── Accounts.tsx    # 账号管理
 │   │   │   ├── ApiKeys.tsx     # API Key 管理
-│   │   │   └── Usage.tsx       # 用量统计
+│   │   │   ├── Usage.tsx       # 用量统计
+│   │   │   └── ErrorLogs.tsx   # 错误日志
 │   │   ├── components/         # UI 组件
 │   │   ├── hooks/              # React Hooks
 │   │   ├── api/                # API 客户端

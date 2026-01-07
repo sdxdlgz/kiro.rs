@@ -10,7 +10,8 @@ import {
   Moon,
   Key,
   BarChart3,
-  LogOut
+  LogOut,
+  AlertTriangle
 } from 'lucide-react'
 
 interface SidebarProps {
@@ -28,6 +29,7 @@ export function Sidebar({ currentPage, onNavigate, onLogout }: SidebarProps) {
     { id: 'accounts', label: '账号管理', icon: Users, description: '管理 Kiro 账号' },
     { id: 'api-keys', label: 'API Key', icon: Key, description: '管理分发的 Key' },
     { id: 'usage', label: '用量统计', icon: BarChart3, description: '查看 Token 用量' },
+    { id: 'error-logs', label: '错误日志', icon: AlertTriangle, description: '查看 API 错误' },
   ]
 
   return (

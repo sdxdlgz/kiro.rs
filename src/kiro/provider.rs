@@ -4,11 +4,13 @@
 //! 支持流式和非流式请求，支持多账号轮询
 
 use std::sync::Arc;
+use chrono::Utc;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONNECTION, CONTENT_TYPE, HOST};
 use reqwest::Client;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use crate::admin::error_logs::{ApiErrorLogEntry, ApiErrorLogStore, ApiErrorType};
 use crate::kiro::account_pool::AccountPool;
 use crate::kiro::machine_id;
 use crate::kiro::model::credentials::KiroCredentials;
@@ -26,6 +28,7 @@ const MAX_TOTAL_RETRIES: usize = 9;
 pub struct KiroProvider {
     account_pool: Arc<RwLock<AccountPool>>,
     client: Client,
+    error_log_store: Arc<RwLock<ApiErrorLogStore>>,
 }
 
 impl KiroProvider {
@@ -37,6 +40,44 @@ impl KiroProvider {
                 .timeout(std::time::Duration::from_secs(720)) // 12 分钟超时
                 .build()
                 .expect("Failed to create HTTP client"),
+            error_log_store: Arc::new(RwLock::new(ApiErrorLogStore::new())),
+        }
+    }
+
+    /// 设置错误日志存储（用于共享）
+    pub fn with_error_log_store(mut self, store: Arc<RwLock<ApiErrorLogStore>>) -> Self {
+        self.error_log_store = store;
+        self
+    }
+
+    /// 获取错误日志存储的引用
+    pub fn get_error_log_store(&self) -> Arc<RwLock<ApiErrorLogStore>> {
+        self.error_log_store.clone()
+    }
+
+    /// 记录 API 错误
+    async fn record_api_error(
+        &self,
+        account_name: &str,
+        status_code: u16,
+        message: &str,
+        is_stream: bool,
+    ) {
+        let entry = ApiErrorLogEntry {
+            timestamp: Utc::now(),
+            account_name: account_name.to_string(),
+            status_code,
+            error_type: ApiErrorType::from_status_code(status_code),
+            message: message.to_string(),
+            is_stream,
+        };
+
+        let mut store = self.error_log_store.write().await;
+        store.add_log(entry);
+
+        // 异步保存到文件（忽略错误）
+        if let Err(e) = store.save_to_file() {
+            tracing::warn!("保存错误日志失败: {}", e);
         }
     }
 
@@ -220,6 +261,8 @@ impl KiroProvider {
             // 6. 400 Bad Request - 客户端错误，不重试，直接返回
             if status.as_u16() == 400 {
                 let body = response.text().await.unwrap_or_default();
+                // 记录错误日志
+                self.record_api_error(&account.name, 400, &body, is_stream).await;
                 anyhow::bail!(
                     "{} API 请求失败 (400 Bad Request): {}",
                     if is_stream { "流式" } else { "非流式" },
@@ -238,6 +281,8 @@ impl KiroProvider {
                     status,
                     body
                 );
+                // 记录错误日志
+                self.record_api_error(&account.name, 429, &body, is_stream).await;
                 // 注意：429 不调用 mark_unhealthy()，不禁用凭据
                 last_error = Some(anyhow::anyhow!(
                     "{} API 请求被限流: {} {}",
@@ -252,6 +297,7 @@ impl KiroProvider {
 
             // 8. 其他错误 - 记录失败并重试
             let body = response.text().await.unwrap_or_default();
+            let status_code = status.as_u16();
             tracing::warn!(
                 "账号 {} API 请求失败（尝试 {}/{}）: {} {}",
                 account.name,
@@ -260,6 +306,8 @@ impl KiroProvider {
                 status,
                 body
             );
+            // 记录错误日志
+            self.record_api_error(&account.name, status_code, &body, is_stream).await;
             account.mark_unhealthy().await;
             last_error = Some(anyhow::anyhow!(
                 "{} API 请求失败: {} {}",

@@ -142,15 +142,8 @@ export function Accounts() {
     const result = await checkAccountUsage(name);
     setActionState(name, 'idle');
     if (result) {
-      if (!result.error) {
-        // 更新持久化存储
-        updateCheckResult(name, result);
-      }
-      // 显示检查结果
-      const message = result.error
-        ? `检查失败: ${result.error}`
-        : `订阅: ${result.subscription || '未知'}\n使用量: ${result.currentUsage.toFixed(1)} / ${result.usageLimit.toFixed(1)} (${result.usagePercent.toFixed(1)}%)`;
-      alert(message);
+      // 直接更新卡片显示，不弹窗
+      updateCheckResult(name, result);
     }
   }, [checkAccountUsage, setActionState, updateCheckResult]);
 
@@ -180,20 +173,11 @@ export function Accounts() {
     const results = await batchCheckAccountsUsage(names);
     setBatchCheckLoading(false);
 
-    // 显示检查结果摘要
-    const successCount = results.filter(r => !r.error).length;
-    const failedCount = results.filter(r => r.error).length;
-
-    let message = `检查完成：成功 ${successCount} 个，失败 ${failedCount} 个\n\n`;
+    // 直接更新所有卡片显示，不弹窗
     results.forEach(r => {
-      if (r.error) {
-        message += `❌ ${r.name}: ${r.error}\n`;
-      } else {
-        message += `✓ ${r.name}: ${r.subscription || '未知'} - ${r.currentUsage.toFixed(1)}/${r.usageLimit.toFixed(1)} (${r.usagePercent.toFixed(1)}%)\n`;
-      }
+      updateCheckResult(r.name, r);
     });
-    alert(message);
-  }, [selectedNames, selectionCount, batchCheckAccountsUsage]);
+  }, [selectedNames, selectionCount, batchCheckAccountsUsage, updateCheckResult]);
 
   // 导入账号
   const handleImport = useCallback(async (data: AddAccountRequest): Promise<boolean> => {
@@ -251,46 +235,40 @@ export function Accounts() {
   const totalRequests = accounts.reduce((sum, a) => sum + a.request_count, 0);
 
   return (
-    <div className="space-y-6">
-      {/* 页面头部 */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-purple-600/20 via-primary/20 to-purple-600/20 p-6 border border-purple-500/20">
+    <div className="space-y-4">
+      {/* 页面头部 - 紧凑版 */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-purple-600/20 via-primary/20 to-purple-600/20 p-4 border border-purple-500/20">
         <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-purple-500/20 to-transparent rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-primary/20 to-transparent rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" />
 
         <div className="relative flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-purple-500/20 border border-purple-500/30">
-              <Users className="h-8 w-8 text-purple-500" />
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-purple-500/20 border border-purple-500/30">
+              <Users className="h-6 w-6 text-purple-500" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">账号管理</h1>
-              <p className="text-muted-foreground mt-1">管理和导入 Kiro SSO Token</p>
+              <h1 className="text-xl font-bold text-foreground">账号管理</h1>
+              <p className="text-muted-foreground text-sm">管理和导入 Kiro SSO Token</p>
             </div>
           </div>
-        </div>
 
-        {/* 快速统计 */}
-        <div className="relative mt-6 grid grid-cols-3 gap-4">
-          <div className="bg-card/50 rounded-xl p-4 border border-border">
-            <div className="flex items-center gap-2 text-muted-foreground text-sm">
-              <Users className="h-4 w-4" />
-              <span>总账号</span>
+          {/* 快速统计 - 内联显示 */}
+          <div className="relative flex items-center gap-4">
+            <div className="bg-card/50 rounded-lg px-4 py-2 border border-border flex items-center gap-2">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">总账号</span>
+              <span className="text-lg font-bold text-foreground">{accounts.length}</span>
             </div>
-            <p className="text-2xl font-bold text-foreground mt-1">{accounts.length}</p>
-          </div>
-          <div className="bg-card/50 rounded-xl p-4 border border-border">
-            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <div className="bg-card/50 rounded-lg px-4 py-2 border border-border flex items-center gap-2">
               <CheckCircle className="h-4 w-4 text-green-500" />
-              <span>健康账号</span>
+              <span className="text-sm text-muted-foreground">健康</span>
+              <span className="text-lg font-bold text-green-500">{healthyCount}</span>
             </div>
-            <p className="text-2xl font-bold text-green-500 mt-1">{healthyCount}</p>
-          </div>
-          <div className="bg-card/50 rounded-xl p-4 border border-border">
-            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <div className="bg-card/50 rounded-lg px-4 py-2 border border-border flex items-center gap-2">
               <Activity className="h-4 w-4 text-primary" />
-              <span>总请求</span>
+              <span className="text-sm text-muted-foreground">请求</span>
+              <span className="text-lg font-bold text-primary">{totalRequests.toLocaleString()}</span>
             </div>
-            <p className="text-2xl font-bold text-primary mt-1">{totalRequests.toLocaleString()}</p>
           </div>
         </div>
       </div>
@@ -348,7 +326,7 @@ export function Accounts() {
       {/* 账号列表 */}
       {sortedAccounts.length > 0 ? (
         viewMode === 'card' ? (
-          <div className="h-[calc(100vh-420px)] min-h-[400px]">
+          <div className="h-[calc(100vh-280px)] min-h-[400px]">
             <AccountCardGrid
               accounts={sortedAccounts}
               metaByName={metaByName}

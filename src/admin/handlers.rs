@@ -9,6 +9,7 @@ use axum::{
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
+use crate::admin::error_logs::{ApiErrorLogEntry, ApiErrorLogStore};
 use crate::db::Database;
 use crate::kiro::account_pool::{AccountPool, AccountState};
 use crate::kiro::model::credentials::KiroCredentials;
@@ -30,6 +31,8 @@ pub struct AdminState {
     pub database: Option<Arc<Database>>,
     /// 管理员 API Key（用于认证）
     pub admin_api_key: String,
+    /// 错误日志存储
+    pub error_log_store: Arc<RwLock<ApiErrorLogStore>>,
 }
 
 impl AdminState {
@@ -46,7 +49,14 @@ impl AdminState {
             credentials_dir,
             database,
             admin_api_key,
+            error_log_store: Arc::new(RwLock::new(ApiErrorLogStore::new())),
         }
+    }
+
+    /// 设置错误日志存储（用于共享）
+    pub fn with_error_log_store(mut self, store: Arc<RwLock<ApiErrorLogStore>>) -> Self {
+        self.error_log_store = store;
+        self
     }
 }
 
@@ -360,8 +370,17 @@ pub async fn check_account(
         Ok(usage) => {
             let current_usage = usage.current_usage();
             let usage_limit = usage.usage_limit();
-            let usage_percent = if usage_limit > 0.0 {
-                (current_usage / usage_limit * 100.0).min(100.0)
+            let usage_ratio = if usage_limit > 0.0 {
+                current_usage / usage_limit
+            } else {
+                f64::NAN
+            };
+
+            // 更新 usage_ratio 缓存
+            account.set_usage_ratio(usage_ratio);
+
+            let usage_percent = if usage_ratio.is_finite() {
+                (usage_ratio * 100.0).min(100.0)
             } else {
                 0.0
             };
@@ -424,8 +443,17 @@ pub async fn batch_check_accounts(
             Ok(usage) => {
                 let current_usage = usage.current_usage();
                 let usage_limit = usage.usage_limit();
-                let usage_percent = if usage_limit > 0.0 {
-                    (current_usage / usage_limit * 100.0).min(100.0)
+                let usage_ratio = if usage_limit > 0.0 {
+                    current_usage / usage_limit
+                } else {
+                    f64::NAN
+                };
+
+                // 更新 usage_ratio 缓存
+                account.set_usage_ratio(usage_ratio);
+
+                let usage_percent = if usage_ratio.is_finite() {
+                    (usage_ratio * 100.0).min(100.0)
                 } else {
                     0.0
                 };
@@ -1410,5 +1438,31 @@ pub async fn export_usage(
         ],
         buffer,
     ).into_response()
+}
+
+// ============ 错误日志 ============
+
+/// 获取错误日志列表
+pub async fn get_error_logs(
+    State(state): State<AdminState>,
+) -> Json<ApiResponse<Vec<ApiErrorLogEntry>>> {
+    let store = state.error_log_store.read().await;
+    let logs = store.get_logs();
+    Json(ApiResponse::success(logs))
+}
+
+/// 清空错误日志
+pub async fn clear_error_logs(
+    State(state): State<AdminState>,
+) -> Json<ApiResponse<()>> {
+    let mut store = state.error_log_store.write().await;
+    store.clear();
+
+    // 保存到文件
+    if let Err(e) = store.save_to_file() {
+        tracing::warn!("保存错误日志失败: {}", e);
+    }
+
+    Json(ApiResponse::success(()))
 }
 
