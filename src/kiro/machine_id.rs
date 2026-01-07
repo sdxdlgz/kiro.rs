@@ -8,26 +8,34 @@ use crate::model::config::Config;
 
 /// 根据凭证信息生成唯一的 Machine ID
 ///
-/// 优先使用自定义配置，然后使用 profileArn 生成，否则使用 refreshToken 生成
+/// 优先级：
+/// 1. 自定义配置的 machineId（必须是64字符）
+/// 2. 使用 refreshToken 生成（推荐，每个账号唯一）
+/// 3. 使用 profileArn 生成（不推荐，多账号可能相同）
 pub fn generate_from_credentials(credentials: &KiroCredentials, config: &Config) -> Option<String> {
-    // 如果配置了自定义 machineId 且长度为 64，优先使用
+    // 优先级 1：如果配置了自定义 machineId 且长度为 64，优先使用
     if let Some(ref machine_id) = config.machine_id {
         if machine_id.len() == 64 {
             return Some(machine_id.clone());
         }
     }
 
-    // 如果有有效的 profileArn 则使用 profileArn 固定指纹
-    if let Some(ref profile_arn) = credentials.profile_arn {
-        if is_valid_profile_arn(profile_arn) {
-            return Some(sha256_hex(&format!("KotlinNativeAPI/{}", profile_arn)));
-        }
-    }
-
-    // 使用 refreshToken 生成
+    // 优先级 2：使用 refreshToken 生成（每个账号唯一）
     if let Some(ref refresh_token) = credentials.refresh_token {
         if !refresh_token.is_empty() {
             return Some(sha256_hex(&format!("KotlinNativeAPI/{}", refresh_token)));
+        }
+    }
+
+    // 优先级 3：使用 profileArn 生成（不推荐，多账号可能相同）
+    // 注意：profileArn 在多账号场景下可能相同，不建议使用
+    // 保留此逻辑仅作为最后的回退
+    if let Some(ref profile_arn) = credentials.profile_arn {
+        if is_valid_profile_arn(profile_arn) {
+            tracing::warn!(
+                "使用 profileArn 生成 machineId，建议确保凭证包含 refreshToken"
+            );
+            return Some(sha256_hex(&format!("KotlinNativeAPI/{}", profile_arn)));
         }
     }
 

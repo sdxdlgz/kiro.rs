@@ -83,6 +83,13 @@ where
     Ok(value.min(MAX_BUDGET_TOKENS))
 }
 
+/// Metadata 请求元数据
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct Metadata {
+    /// 用户 ID，格式可能为: user_xxx_account__session_UUID
+    pub user_id: Option<String>,
+}
+
 /// Messages 请求体
 #[derive(Debug, Deserialize)]
 pub struct MessagesRequest {
@@ -95,6 +102,8 @@ pub struct MessagesRequest {
     pub tools: Option<Vec<Tool>>,
     pub tool_choice: Option<serde_json::Value>,
     pub thinking: Option<Thinking>,
+    /// 请求元数据（包含 user_id 等）
+    pub metadata: Option<Metadata>,
 }
 
 /// 消息

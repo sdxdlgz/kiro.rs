@@ -14,6 +14,11 @@ use crate::kiro::machine_id;
 use crate::kiro::model::credentials::KiroCredentials;
 use crate::model::config::Config;
 
+/// 每个凭据最大重试次数
+const MAX_RETRIES_PER_CREDENTIAL: usize = 3;
+/// 总重试次数硬上限
+const MAX_TOTAL_RETRIES: usize = 9;
+
 /// Kiro API Provider
 ///
 /// 核心组件，负责与 Kiro API 通信
@@ -103,98 +108,185 @@ impl KiroProvider {
         Ok(headers)
     }
 
-    /// 获取一个可用账号并执行请求
-    async fn execute_with_account<F, Fut>(
+    /// 获取一个可用账号并执行请求（带重试逻辑）
+    ///
+    /// 重试策略：
+    /// - 每个凭据最多重试 3 次
+    /// - 总重试次数上限 9 次
+    /// - 429 错误不计入失败次数，继续重试
+    /// - 400 错误直接返回，不重试
+    async fn call_api_with_retry(
         &self,
         request_body: &str,
-        execute_fn: F,
-    ) -> anyhow::Result<reqwest::Response>
-    where
-        F: Fn(Client, String, HeaderMap, String) -> Fut,
-        Fut: std::future::Future<Output = anyhow::Result<reqwest::Response>>,
-    {
+        is_stream: bool,
+    ) -> anyhow::Result<reqwest::Response> {
         let pool = self.account_pool.read().await;
-        let account = pool
-            .get_least_used_account()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("没有可用的账号"))?;
+        let total_credentials = pool.account_count();
         let config = pool.config().clone();
         drop(pool); // 释放读锁
 
-        // 增加请求计数
-        account.increment_request();
+        let max_retries = (total_credentials * MAX_RETRIES_PER_CREDENTIAL).min(MAX_TOTAL_RETRIES);
+        let mut last_error: Option<anyhow::Error> = None;
 
-        tracing::debug!(
-            "使用账号: {} (请求次数: {})",
-            account.name,
-            account.get_request_count()
-        );
-
-        // 获取 token（通过 RwLock 安全地刷新）
-        let token = account.ensure_valid_token().await;
-
-        match token {
-            Ok(token) => {
-                // 获取凭证信息用于构建请求头
-                let credentials = {
-                    let tm = account.token_manager.read().await;
-                    tm.credentials().clone()
-                };
-
-                let headers = self.build_headers(&token, &credentials, &config)?;
-                let url = self.base_url(&config);
-
-                match execute_fn(self.client.clone(), url, headers, request_body.to_string()).await
-                {
-                    Ok(response) => {
-                        account.mark_healthy();
-                        Ok(response)
-                    }
-                    Err(e) => {
-                        tracing::warn!("账号 {} 请求失败: {}", account.name, e);
-                        account.mark_unhealthy().await;
-                        Err(e)
-                    }
+        for attempt in 0..max_retries {
+            // 1. 获取可用账号
+            let pool = self.account_pool.read().await;
+            let account = match pool.get_least_used_account().await {
+                Some(a) => a,
+                None => {
+                    drop(pool);
+                    // 所有凭据都不可用
+                    return Err(last_error.unwrap_or_else(|| {
+                        anyhow::anyhow!("所有凭据均已禁用或不可用")
+                    }));
                 }
+            };
+            drop(pool); // 释放读锁
+
+            account.increment_request();
+            tracing::debug!(
+                "使用账号: {} (尝试 {}/{}, 请求次数: {})",
+                account.name,
+                attempt + 1,
+                max_retries,
+                account.get_request_count()
+            );
+
+            // 2. 获取 token
+            let token = match account.ensure_valid_token().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(
+                        "账号 {} Token 获取失败（尝试 {}/{}）: {}",
+                        account.name,
+                        attempt + 1,
+                        max_retries,
+                        e
+                    );
+                    account.mark_unhealthy().await;
+                    last_error = Some(e);
+                    continue;
+                }
+            };
+
+            // 3. 获取凭证并构建请求
+            let credentials = {
+                let tm = account.token_manager.read().await;
+                tm.credentials().clone()
+            };
+
+            let headers = match self.build_headers(&token, &credentials, &config) {
+                Ok(h) => h,
+                Err(e) => {
+                    last_error = Some(e);
+                    continue;
+                }
+            };
+
+            let url = self.base_url(&config);
+
+            // 4. 发送请求
+            let response = match self
+                .client
+                .post(&url)
+                .headers(headers)
+                .body(request_body.to_string())
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    tracing::warn!(
+                        "账号 {} 请求发送失败（尝试 {}/{}）: {}",
+                        account.name,
+                        attempt + 1,
+                        max_retries,
+                        e
+                    );
+                    account.mark_unhealthy().await;
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+
+            let status = response.status();
+
+            // 5. 成功响应
+            if status.is_success() {
+                account.mark_healthy();
+                return Ok(response);
             }
-            Err(e) => {
-                tracing::warn!("账号 {} Token 刷新失败: {}", account.name, e);
-                account.mark_unhealthy().await;
-                Err(e)
+
+            // 6. 400 Bad Request - 客户端错误，不重试，直接返回
+            if status.as_u16() == 400 {
+                let body = response.text().await.unwrap_or_default();
+                anyhow::bail!(
+                    "{} API 请求失败 (400 Bad Request): {}",
+                    if is_stream { "流式" } else { "非流式" },
+                    body
+                );
             }
+
+            // 7. 429 Too Many Requests - 限流错误，不计入失败次数，继续重试
+            if status.as_u16() == 429 {
+                let body = response.text().await.unwrap_or_default();
+                tracing::warn!(
+                    "账号 {} API 请求被限流（尝试 {}/{}）: {} {}",
+                    account.name,
+                    attempt + 1,
+                    max_retries,
+                    status,
+                    body
+                );
+                // 注意：429 不调用 mark_unhealthy()，不禁用凭据
+                last_error = Some(anyhow::anyhow!(
+                    "{} API 请求被限流: {} {}",
+                    if is_stream { "流式" } else { "非流式" },
+                    status,
+                    body
+                ));
+                // 短暂等待后重试
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                continue;
+            }
+
+            // 8. 其他错误 - 记录失败并重试
+            let body = response.text().await.unwrap_or_default();
+            tracing::warn!(
+                "账号 {} API 请求失败（尝试 {}/{}）: {} {}",
+                account.name,
+                attempt + 1,
+                max_retries,
+                status,
+                body
+            );
+            account.mark_unhealthy().await;
+            last_error = Some(anyhow::anyhow!(
+                "{} API 请求失败: {} {}",
+                if is_stream { "流式" } else { "非流式" },
+                status,
+                body
+            ));
         }
+
+        // 所有重试都失败
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "{} API 请求失败：已达到最大重试次数（{}次）",
+                if is_stream { "流式" } else { "非流式" },
+                max_retries
+            )
+        }))
     }
 
     /// 发送非流式 API 请求
     pub async fn call_api(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
-        self.execute_with_account(request_body, |client, url, headers, body| async move {
-            let response = client.post(&url).headers(headers).body(body).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                anyhow::bail!("API 请求失败: {} {}", status, body);
-            }
-
-            Ok(response)
-        })
-        .await
+        self.call_api_with_retry(request_body, false).await
     }
 
     /// 发送流式 API 请求
     pub async fn call_api_stream(&self, request_body: &str) -> anyhow::Result<reqwest::Response> {
-        self.execute_with_account(request_body, |client, url, headers, body| async move {
-            let response = client.post(&url).headers(headers).body(body).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                anyhow::bail!("流式 API 请求失败: {} {}", status, body);
-            }
-
-            Ok(response)
-        })
-        .await
+        self.call_api_with_retry(request_body, true).await
     }
 
     /// 获取账号池状态信息

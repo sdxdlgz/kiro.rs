@@ -69,7 +69,13 @@ pub fn convert_request(req: &MessagesRequest) -> Result<ConversionResult, Conver
     }
 
     // 3. 生成会话 ID 和代理 ID
-    let conversation_id = Uuid::new_v4().to_string();
+    // 优先从 metadata.user_id 中提取 session UUID 作为 conversationId
+    let conversation_id = req
+        .metadata
+        .as_ref()
+        .and_then(|m| m.user_id.as_ref())
+        .and_then(|user_id| extract_session_id(user_id))
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let agent_continuation_id = Uuid::new_v4().to_string();
 
     // 4. 确定触发类型
@@ -80,7 +86,22 @@ pub fn convert_request(req: &MessagesRequest) -> Result<ConversionResult, Conver
     let (text_content, images, tool_results) = process_message_content(&last_message.content)?;
 
     // 6. 转换工具定义
-    let tools = convert_tools(&req.tools);
+    let mut tools = convert_tools(&req.tools);
+
+    // 6.1 收集历史消息中使用的工具名称，为不在 tools 列表中的工具创建占位符
+    // 这是为了防止 Kiro API 返回 400 错误（历史中引用的工具必须在 tools 中定义）
+    let history_tool_names = collect_history_tool_names(&req.messages);
+    let existing_tool_names: std::collections::HashSet<_> = tools
+        .iter()
+        .map(|t| t.tool_specification.name.to_lowercase())
+        .collect();
+
+    for tool_name in history_tool_names {
+        if !existing_tool_names.contains(&tool_name.to_lowercase()) {
+            tools.push(create_placeholder_tool(&tool_name));
+            tracing::debug!("为历史工具创建占位符: {}", tool_name);
+        }
+    }
 
     // 7. 构建 UserInputMessageContext
     let mut context = UserInputMessageContext::new();
@@ -119,6 +140,28 @@ pub fn convert_request(req: &MessagesRequest) -> Result<ConversionResult, Conver
     Ok(ConversionResult {
         conversation_state
     })
+}
+
+/// 从 metadata.user_id 中提取 session UUID
+///
+/// user_id 格式: user_xxx_account__session_0b4445e1-f5be-49e1-87ce-62bbc28ad705
+/// 提取 session_ 后面的 UUID 作为 conversationId
+fn extract_session_id(user_id: &str) -> Option<String> {
+    // 查找 "session_" 后面的内容
+    if let Some(pos) = user_id.find("session_") {
+        let session_part = &user_id[pos + 8..]; // "session_" 长度为 8
+
+        // session_part 应该是 UUID 格式: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        // 验证是否是有效的 UUID 格式（36 字符，包含 4 个连字符）
+        if session_part.len() >= 36 {
+            let uuid_str = &session_part[..36];
+            // 简单验证 UUID 格式
+            if uuid_str.chars().filter(|c| *c == '-').count() == 4 {
+                return Some(uuid_str.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// 确定聊天触发类型
@@ -475,6 +518,51 @@ fn convert_assistant_message(
     })
 }
 
+/// 收集历史消息中使用的所有工具名称
+fn collect_history_tool_names(messages: &[super::types::Message]) -> Vec<String> {
+    let mut tool_names = Vec::new();
+
+    for msg in messages {
+        if msg.role != "assistant" {
+            continue;
+        }
+
+        // 解析 assistant 消息中的 tool_use
+        if let serde_json::Value::Array(arr) = &msg.content {
+            for item in arr {
+                if let Ok(block) = serde_json::from_value::<ContentBlock>(item.clone()) {
+                    if block.block_type == "tool_use" {
+                        if let Some(name) = block.name {
+                            if !tool_names.contains(&name) {
+                                tool_names.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    tool_names
+}
+
+/// 为历史中使用但不在 tools 列表中的工具创建占位符定义
+fn create_placeholder_tool(name: &str) -> Tool {
+    Tool {
+        tool_specification: ToolSpecification {
+            name: name.to_string(),
+            description: "Tool used in conversation history".to_string(),
+            input_schema: InputSchema::from_json(serde_json::json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": true
+            })),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,6 +600,7 @@ mod tests {
             tools: None,
             tool_choice: None,
             thinking: None,
+            metadata: None,
         };
         assert_eq!(determine_chat_trigger_type(&req), "MANUAL");
     }

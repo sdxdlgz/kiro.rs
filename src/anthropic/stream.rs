@@ -134,6 +134,50 @@ fn find_real_thinking_start_tag(buffer: &str) -> Option<usize> {
     None
 }
 
+/// 查找缓冲区末尾的 thinking 结束标签（允许末尾只有空白字符）
+///
+/// 在流式处理的最后阶段，可能没有双换行符，但标签后面全是空白字符
+/// 这种情况也应该被认为是有效的结束标签
+fn find_real_thinking_end_tag_at_buffer_end(buffer: &str) -> Option<usize> {
+    const TAG: &str = "</thinking>";
+    let mut search_start = 0;
+
+    while let Some(pos) = buffer[search_start..].find(TAG) {
+        let absolute_pos = search_start + pos;
+
+        // 检查前面是否有引用字符
+        let has_quote_before = absolute_pos > 0 && is_quote_char(buffer, absolute_pos - 1);
+
+        // 检查后面是否有引用字符
+        let after_pos = absolute_pos + TAG.len();
+        let has_quote_after = is_quote_char(buffer, after_pos);
+
+        // 如果被引用字符包裹，跳过
+        if has_quote_before || has_quote_after {
+            search_start = absolute_pos + 1;
+            continue;
+        }
+
+        // 检查后面的内容
+        let after_content = &buffer[after_pos..];
+
+        // 如果标签后面全是空白字符，认为是有效的结束标签
+        if after_content.trim().is_empty() {
+            return Some(absolute_pos);
+        }
+
+        // 如果有双换行符，也是有效的结束标签
+        if after_content.starts_with("\n\n") {
+            return Some(absolute_pos);
+        }
+
+        // 不是有效的结束标签，继续搜索
+        search_start = absolute_pos + 1;
+    }
+
+    None
+}
+
 /// SSE 事件
 #[derive(Debug, Clone)]
 pub struct SseEvent {

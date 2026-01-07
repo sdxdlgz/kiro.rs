@@ -306,16 +306,20 @@ mod tests {
     fn test_create_api_key() {
         let db = Database::new_in_memory().unwrap();
 
+        // Note: Database init creates an admin key with id=0
+        let initial_count = list_api_keys(&db).unwrap().len();
+
         let (id, full_key) = create_api_key(&db, "Test Key".to_string(), None, None).unwrap();
 
         assert!(id > 0);
         assert!(full_key.starts_with("sk-kiro-"));
 
-        // Verify key was stored
+        // Verify key was stored (should have one more than initial)
         let keys = list_api_keys(&db).unwrap();
-        assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0].name, "Test Key");
-        assert_eq!(keys[0].id, id);
+        assert_eq!(keys.len(), initial_count + 1);
+        // Find our newly created key
+        let our_key = keys.iter().find(|k| k.id == id).unwrap();
+        assert_eq!(our_key.name, "Test Key");
     }
 
     #[test]
@@ -371,14 +375,17 @@ mod tests {
     fn test_list_api_keys() {
         let db = Database::new_in_memory().unwrap();
 
+        // Note: Database init creates an admin key with id=0
+        let initial_count = list_api_keys(&db).unwrap().len();
+
         create_api_key(&db, "Key 1".to_string(), None, None).unwrap();
         create_api_key(&db, "Key 2".to_string(), None, Some(200)).unwrap();
         create_api_key(&db, "Key 3".to_string(), None, None).unwrap();
 
         let keys = list_api_keys(&db).unwrap();
-        assert_eq!(keys.len(), 3);
+        assert_eq!(keys.len(), initial_count + 3);
 
-        // Should be ordered by created_at DESC
+        // Should be ordered by created_at DESC, so our new keys are first
         assert_eq!(keys[0].name, "Key 3");
         assert_eq!(keys[1].name, "Key 2");
         assert_eq!(keys[2].name, "Key 1");
@@ -421,15 +428,18 @@ mod tests {
     fn test_delete_api_key() {
         let db = Database::new_in_memory().unwrap();
 
+        // Note: Database init creates an admin key with id=0
+        let initial_count = list_api_keys(&db).unwrap().len();
+
         let (id, _full_key) = create_api_key(&db, "Test Key".to_string(), None, None).unwrap();
 
         // Delete the key
         let deleted = delete_api_key(&db, id).unwrap();
         assert!(deleted);
 
-        // Verify it's gone
+        // Verify it's gone (back to initial count)
         let keys = list_api_keys(&db).unwrap();
-        assert_eq!(keys.len(), 0);
+        assert_eq!(keys.len(), initial_count);
     }
 
     #[test]
