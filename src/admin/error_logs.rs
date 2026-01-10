@@ -52,6 +52,9 @@ pub struct ApiErrorLogEntry {
     pub message: String,
     /// 是否为流式请求
     pub is_stream: bool,
+    /// 请求体（仅 400 错误时记录，截断到 10KB）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<String>,
 }
 
 /// API 错误日志存储
@@ -187,6 +190,7 @@ mod tests {
             error_type: ApiErrorType::from_status_code(code),
             message: format!("Error {}", code),
             is_stream: false,
+            request_body: None,
         }
     }
 

@@ -62,7 +62,21 @@ impl KiroProvider {
         status_code: u16,
         message: &str,
         is_stream: bool,
+        request_body: Option<&str>,
     ) {
+        // 对于 400 错误，记录请求体（截断到 10KB）
+        let request_body_truncated = if status_code == 400 {
+            request_body.map(|body| {
+                if body.len() > 10240 {
+                    format!("{}... [truncated, total {} bytes]", &body[..10240], body.len())
+                } else {
+                    body.to_string()
+                }
+            })
+        } else {
+            None
+        };
+
         let entry = ApiErrorLogEntry {
             timestamp: Utc::now(),
             account_name: account_name.to_string(),
@@ -70,6 +84,7 @@ impl KiroProvider {
             error_type: ApiErrorType::from_status_code(status_code),
             message: message.to_string(),
             is_stream,
+            request_body: request_body_truncated,
         };
 
         let mut store = self.error_log_store.write().await;
@@ -261,8 +276,8 @@ impl KiroProvider {
             // 6. 400 Bad Request - 客户端错误，不重试，直接返回
             if status.as_u16() == 400 {
                 let body = response.text().await.unwrap_or_default();
-                // 记录错误日志
-                self.record_api_error(&account.name, 400, &body, is_stream).await;
+                // 记录错误日志（包含请求体）
+                self.record_api_error(&account.name, 400, &body, is_stream, Some(request_body)).await;
                 anyhow::bail!(
                     "{} API 请求失败 (400 Bad Request): {}",
                     if is_stream { "流式" } else { "非流式" },
@@ -282,7 +297,7 @@ impl KiroProvider {
                     body
                 );
                 // 记录错误日志
-                self.record_api_error(&account.name, 429, &body, is_stream).await;
+                self.record_api_error(&account.name, 429, &body, is_stream, None).await;
                 // 注意：429 不调用 mark_unhealthy()，不禁用凭据
                 last_error = Some(anyhow::anyhow!(
                     "{} API 请求被限流: {} {}",
@@ -307,7 +322,7 @@ impl KiroProvider {
                 body
             );
             // 记录错误日志
-            self.record_api_error(&account.name, status_code, &body, is_stream).await;
+            self.record_api_error(&account.name, status_code, &body, is_stream, None).await;
             account.mark_unhealthy().await;
             last_error = Some(anyhow::anyhow!(
                 "{} API 请求失败: {} {}",
