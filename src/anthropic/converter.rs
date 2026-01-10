@@ -257,6 +257,12 @@ fn extract_tool_result_content(content: &Option<serde_json::Value>) -> String {
 }
 
 /// 转换工具定义
+/// 工具描述最大长度
+const MAX_TOOL_DESCRIPTION_LENGTH: usize = 2000;
+
+/// 最大工具数量
+const MAX_TOOLS_COUNT: usize = 50;
+
 fn convert_tools(tools: &Option<Vec<super::types::Tool>>) -> Vec<Tool> {
     let Some(tools) = tools else {
         return Vec::new();
@@ -265,11 +271,12 @@ fn convert_tools(tools: &Option<Vec<super::types::Tool>>) -> Vec<Tool> {
     tools
         .iter()
         .filter(|t| !is_unsupported_tool(&t.name))
+        .take(MAX_TOOLS_COUNT) // 限制工具数量
         .map(|t| {
             let mut description = t.description.clone();
-            // 限制描述长度为 10000 字符
-            if description.len() > 10000 {
-                description = description[..10000].to_string();
+            // 限制描述长度
+            if description.len() > MAX_TOOL_DESCRIPTION_LENGTH {
+                description = format!("{}...", &description[..MAX_TOOL_DESCRIPTION_LENGTH]);
             }
 
             Tool {
