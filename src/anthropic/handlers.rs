@@ -161,6 +161,16 @@ pub async fn post_messages(
         profile_arn: state.profile_arn.clone(),
     };
 
+    // 记录历史消息和工具数量
+    let history_count = kiro_request.conversation_state.history.len();
+    let tools_count = kiro_request.conversation_state.current_message.user_input_message.user_input_message_context.tools.len();
+    let tool_results_count = kiro_request.conversation_state.current_message.user_input_message.user_input_message_context.tool_results.len();
+
+    tracing::info!(
+        "请求统计: history_messages={}, tools={}, tool_results={}",
+        history_count, tools_count, tool_results_count
+    );
+
     let request_body = match serde_json::to_string(&kiro_request) {
         Ok(body) => body,
         Err(e) => {
@@ -176,6 +186,7 @@ pub async fn post_messages(
         }
     };
 
+    tracing::info!("Kiro request body size: {} bytes", request_body.len());
     tracing::debug!("Kiro request body: {}", request_body);
 
     // 估算输入 tokens

@@ -64,11 +64,19 @@ impl KiroProvider {
         is_stream: bool,
         request_body: Option<&str>,
     ) {
-        // 对于 400 错误，记录请求体（截断到 10KB）
+        // 对于 400 错误，记录请求体（截断到 50KB）
         let request_body_truncated = if status_code == 400 {
             request_body.map(|body| {
-                if body.len() > 10240 {
-                    format!("{}... [truncated, total {} bytes]", &body[..10240], body.len())
+                let body_len = body.len();
+                if body_len > 51200 {
+                    // 安全截断 UTF-8 字符串
+                    let truncate_at = body
+                        .char_indices()
+                        .take_while(|(i, _)| *i < 51200)
+                        .last()
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(0);
+                    format!("{}... [truncated, total {} bytes]", &body[..truncate_at], body_len)
                 } else {
                     body.to_string()
                 }
